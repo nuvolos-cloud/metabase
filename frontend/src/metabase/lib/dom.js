@@ -13,7 +13,7 @@ export const getScrollY = () =>
 // Cypress renders the whole app within an iframe, but we want to exlude it from this check to avoid certain components (like Nav bar) not rendering
 export const isWithinIframe = function () {
   try {
-    return !isCypressActive && window.self !== window.top;
+    return false;
   } catch (e) {
     return true;
   }
