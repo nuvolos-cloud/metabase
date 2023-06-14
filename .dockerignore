@@ -11,6 +11,7 @@ target/*
 .github
 .vscode
 hooks/*
+!frontend/src/hooks
 test/*
 test_config/*
 test_modules/*
