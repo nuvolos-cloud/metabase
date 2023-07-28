@@ -34,6 +34,7 @@
    [metabase.models.moderation-review :as moderation-review]
    [metabase.models.params :as params]
    [metabase.models.params.custom-values :as custom-values]
+   [metabase.models.permissions :as perms]
    [metabase.models.persisted-info :as persisted-info]
    [metabase.models.pulse :as pulse]
    [metabase.models.query :as query]
@@ -41,6 +42,7 @@
    [metabase.models.revision.last-edit :as last-edit]
    [metabase.models.timeline :as timeline]
    [metabase.public-settings :as public-settings]
+   [metabase.public-settings.premium-features :as premium-features]
    [metabase.query-processor.async :as qp.async]
    [metabase.query-processor.card :as qp.card]
    [metabase.query-processor.pivot :as qp.pivot]
@@ -49,7 +51,6 @@
    [metabase.server.middleware.offset-paging :as mw.offset-paging]
    [metabase.sync :as sync]
    [metabase.sync.analyze.query-results :as qr]
-   [metabase.sync.fetch-metadata :as fetch-metadata]
    [metabase.sync.sync-metadata.fields :as sync-fields]
    [metabase.sync.sync-metadata.tables :as sync-tables]
    [metabase.task.persist-refresh :as task.persist-refresh]
@@ -65,8 +66,7 @@
    [toucan2.core :as t2])
   (:import
    (clojure.core.async.impl.channels ManyToManyChannel)
-   (java.io File)
-   (java.util UUID)))
+   (java.io File)))
 
 (set! *warn-on-reflection* true)
 
@@ -420,6 +420,11 @@
             valid-metadata?)
        ;; only sent valid metadata in the edit. Metadata might be the same, might be different. We save in either case
        (and (nil? query)
+            valid-metadata?)
+
+       ;; copying card and reusing existing metadata
+       (and (nil? original-query)
+            query
             valid-metadata?))
       (do
         (log/debug (trs "Reusing provided metadata"))
@@ -981,7 +986,7 @@ saved later when it is ready."
   (api/check-not-archived (api/read-check Card card-id))
   (let [{existing-public-uuid :public_uuid} (t2/select-one [Card :public_uuid] :id card-id)]
     {:uuid (or existing-public-uuid
-               (u/prog1 (str (UUID/randomUUID))
+               (u/prog1 (str (random-uuid))
                  (t2/update! Card card-id
                              {:public_uuid       <>
                               :made_public_by_id api/*current-user-id*})))}))
@@ -1139,10 +1144,10 @@ saved later when it is ready."
   (param-values (api/read-check Card card-id) param-key query))
 
 (defn- scan-and-sync-table!
-  [{:keys [is_on_demand is_full_sync] :as database} table]
+  [database table]
   (sync-fields/sync-fields-for-table! database table)
-  (when (or is_on_demand is_full_sync)
-    (future (sync/sync-table! table))))
+  (future
+    (sync/sync-table! table)))
 
 (defn- csv-stats [^File csv-file]
   (with-open [reader (bom/bom-reader csv-file)]
@@ -1158,16 +1163,24 @@ saved later when it is ready."
   [collection-id filename ^File csv-file]
   {collection-id ms/PositiveInt}
   (when (not (public-settings/uploads-enabled))
-    (throw (Exception. "Uploads are not enabled.")))
+    (throw (Exception. (tru "Uploads are not enabled."))))
+  (when (premium-features/sandboxed-user?)
+    (throw (Exception. (tru "Uploads are not permitted for sandboxed users."))))
   (collection/check-write-perms-for-collection collection-id)
   (try
     (let [start-time        (System/currentTimeMillis)
           db-id             (public-settings/uploads-database-id)
           database          (or (t2/select-one Database :id db-id)
                                 (throw (Exception. (tru "The uploads database does not exist."))))
-          _check_perms      (api/check-403 (mi/can-read? database))
           driver            (driver.u/database->driver database)
           schema-name       (public-settings/uploads-schema-name)
+          _check-schema     (when (and (str/blank? schema-name)
+                                       (driver/database-supports? driver :schemas database))
+                              (throw (ex-info (tru "A schema has not been set.")
+                                              {:status-code 422})))
+          _check_perms      (api/check-403 (perms/set-has-full-permissions? @api/*current-user-permissions-set*
+                                                                            (perms/data-perms-path db-id schema-name)))
+
           _check-schema     (when-not (or (nil? schema-name)
                                           (driver.s/include-schema? database schema-name))
                               (throw (ex-info (tru "The schema {0} is not syncable." schema-name)
@@ -1182,23 +1195,18 @@ saved later when it is ready."
           schema+table-name (if (str/blank? schema-name)
                               table-name
                               (str schema-name "." table-name))
-          stats             (upload/load-from-csv driver db-id schema+table-name csv-file)
+          stats             (upload/load-from-csv! driver db-id schema+table-name csv-file)
           ;; Syncs are needed immediately to create the Table and its Fields; the scan is settings-dependent and can be async
-          table-metadata    (first (filter (fn [{:keys [name]}] (= (u/lower-case-en name) table-name))
-                                           (:tables (fetch-metadata/db-metadata database))))
-          actual-schema     (:schema table-metadata)
-          _                 (when (nil? table-metadata)
-                              (driver/drop-table driver db-id table-name)
-                              (throw (ex-info (tru "The CSV file was uploaded to {0}, but the table could not be created or found." schema+table-name)
-                                              {:status-code 422})))
-          table             (sync-tables/create-or-reactivate-table! database {:name table-name :schema actual-schema})
+          table             (sync-tables/create-or-reactivate-table! database {:name table-name :schema (not-empty schema-name)})
+          table-id          (u/the-id table)
+          _set_is_upload    (t2/update! Table table-id {:is_upload true})
           _sync             (scan-and-sync-table! database table)
           card              (create-card!
                              {:collection_id          collection-id,
                               :dataset                true
                               :database_id            db-id
                               :dataset_query          {:database db-id
-                                                       :query    {:source-table (u/the-id table)}
+                                                       :query    {:source-table table-id}
                                                        :type     :query}
                               :display                :table
                               :name                   (humanization/name->human-readable-name filename-prefix)
@@ -1223,11 +1231,17 @@ saved later when it is ready."
 (api/defendpoint ^:multipart POST "/from-csv"
   "Create a table and model populated with the values from the attached CSV. Returns the model ID if successful."
   [:as {raw-params :params}]
-  ;; parse-long returns nil with "root", which is what we want anyway
-  (let [model-id (:id (upload-csv! (parse-long (get raw-params "collection_id"))
-                                   (get-in raw-params ["file" :filename])
-                                   (get-in raw-params ["file" :tempfile])))]
-    {:status 200
-     :body   model-id}))
+  ;; parse-long returns nil with "root" as the collection ID, which is what we want anyway
+  (try
+    (let [model-id (:id (upload-csv! (parse-long (get raw-params "collection_id"))
+                                     (get-in raw-params ["file" :filename])
+                                     (get-in raw-params ["file" :tempfile])))]
+      {:status 200
+       :body   model-id})
+    (catch Throwable e
+      {:status (or (-> e ex-data :status-code)
+                   500)
+       :body   {:message (or (ex-message e)
+                             (tru "There was an error uploading the file"))}})))
 
 (api/define-routes)

@@ -6,6 +6,7 @@ import {
   setupSMTP,
   describeEE,
   getFullName,
+  setTokenFeatures,
 } from "e2e/support/helpers";
 import { USERS, USER_GROUPS } from "e2e/support/cypress_data";
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
@@ -72,12 +73,12 @@ describe("scenarios > admin > people", () => {
 
       cy.get("@groupsTab").click();
       // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText(GROUP).closest("tr").contains("3");
+      cy.findByText(GROUP).closest("tr").contains("4");
       // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
       cy.findByText(GROUP).click();
 
       // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("3 members");
+      cy.findByText("4 members");
 
       cy.button("Add members").click();
       cy.focused().type(admin.first_name);
@@ -86,11 +87,11 @@ describe("scenarios > admin > people", () => {
       cy.button("Add").click();
 
       // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("4 members");
+      cy.findByText("5 members");
 
       removeUserFromGroup(adminUserName);
       // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("3 members");
+      cy.findByText("4 members");
 
       // should load the members when navigating to the group directly
       cy.visit(`/admin/people/groups/${DATA_GROUP}`);
@@ -130,6 +131,7 @@ describe("scenarios > admin > people", () => {
 
       // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
       cy.findByText(FULL_NAME);
+      cy.location().should(loc => expect(loc.pathname).to.eq("/admin/people"));
     });
 
     it("should allow admin to create new users without first name or last name (metabase#22754)", () => {
@@ -197,6 +199,9 @@ describe("scenarios > admin > people", () => {
         cy.findByText("Deactivate user").click();
         clickButton("Deactivate");
         cy.findByText(FULL_NAME).should("not.exist");
+        cy.location().should(loc =>
+          expect(loc.pathname).to.eq("/admin/people"),
+        );
 
         cy.log("It should load inactive users");
         cy.findByText("Deactivated").click();
@@ -204,6 +209,9 @@ describe("scenarios > admin > people", () => {
         cy.icon("refresh").click();
         cy.findByText(`Reactivate ${FULL_NAME}?`);
         clickButton("Reactivate");
+        cy.location().should(loc =>
+          expect(loc.pathname).to.eq("/admin/people"),
+        );
       });
     });
 
@@ -220,6 +228,7 @@ describe("scenarios > admin > people", () => {
       clickButton("Update");
       // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
       cy.findByText(NEW_FULL_NAME);
+      cy.location().should(loc => expect(loc.pathname).to.eq("/admin/people"));
     });
 
     it("should reset user password without SMTP set up", () => {
@@ -235,6 +244,22 @@ describe("scenarios > admin > people", () => {
       // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
       cy.findByText(/^temporary password$/i);
       clickButton("Done");
+      cy.location().should(loc => expect(loc.pathname).to.eq("/admin/people"));
+    });
+
+    it("should not offer to reset passwords when password login is disabled", () => {
+      cy.request("PUT", "/api/google/settings", {
+        "google-auth-auto-create-accounts-domain": null,
+        "google-auth-client-id": "example1.apps.googleusercontent.com",
+        "google-auth-enabled": true,
+      });
+
+      cy.request("PUT", "/api/setting", {
+        "enable-password-login": false,
+      });
+      cy.visit("/admin/people");
+      showUserOptions(normalUserName);
+      popover().findByText("Reset password").should("not.exist");
     });
 
     it(
@@ -464,6 +489,7 @@ describeEE("scenarios > admin > people", () => {
   beforeEach(() => {
     restore();
     cy.signInAsAdmin();
+    setTokenFeatures("all");
   });
 
   it("should unsubscribe a user from all subscriptions and alerts", () => {

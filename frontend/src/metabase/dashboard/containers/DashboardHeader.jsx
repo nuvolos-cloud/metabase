@@ -1,10 +1,11 @@
-/* eslint-disable react/prop-types */
 import { Component, Fragment } from "react";
 import { connect } from "react-redux";
 import { push } from "react-router-redux";
 import PropTypes from "prop-types";
 import { t } from "ttag";
 import _ from "underscore";
+
+import { trackExportDashboardToPDF } from "metabase/dashboard/analytics";
 
 import { getIsNavbarOpen } from "metabase/redux/app";
 
@@ -35,7 +36,7 @@ import { hasDatabaseActionsEnabled } from "metabase/dashboard/utils";
 import { saveDashboardPdf } from "metabase/visualizations/lib/save-dashboard-pdf";
 import { getSetting } from "metabase/selectors/settings";
 
-import DashboardHeaderView from "../components/DashboardHeaderView";
+import { DashboardHeaderComponent } from "../components/DashboardHeader";
 import { SIDEBAR_NAME } from "../constants";
 import {
   DashboardHeaderButton,
@@ -76,7 +77,6 @@ class DashboardHeader extends Component {
 
   static propTypes = {
     dashboard: PropTypes.object.isRequired,
-    isEditable: PropTypes.bool.isRequired,
     isEditing: PropTypes.oneOfType([PropTypes.bool, PropTypes.object])
       .isRequired,
     isFullscreen: PropTypes.bool.isRequired,
@@ -92,7 +92,7 @@ class DashboardHeader extends Component {
     addMarkdownDashCardToDashboard: PropTypes.func.isRequired,
     addLinkDashCardToDashboard: PropTypes.func.isRequired,
     fetchDashboard: PropTypes.func.isRequired,
-    saveDashboardAndCards: PropTypes.func.isRequired,
+    updateDashboardAndCards: PropTypes.func.isRequired,
     setDashboardAttribute: PropTypes.func.isRequired,
 
     onEditingChange: PropTypes.func.isRequired,
@@ -121,6 +121,18 @@ class DashboardHeader extends Component {
       query: PropTypes.object,
       pathname: PropTypes.string,
     }),
+
+    createBookmark: PropTypes.func,
+    deleteBookmark: PropTypes.func,
+    isBookmarked: PropTypes.bool,
+    dashboardBeforeEditing: PropTypes.object,
+    parametersWidget: PropTypes.node,
+    isShowingDashboardInfoSidebar: PropTypes.bool,
+    isAddParameterPopoverOpen: PropTypes.bool,
+    showAddParameterPopover: PropTypes.func,
+    hideAddParameterPopover: PropTypes.func,
+    addParameter: PropTypes.func,
+    isHomepageDashboard: PropTypes.bool,
   };
 
   handleEdit(dashboard) {
@@ -177,8 +189,8 @@ class DashboardHeader extends Component {
     );
   }
 
-  async onSave(preserveParameters) {
-    await this.props.saveDashboardAndCards(preserveParameters);
+  async onSave() {
+    await this.props.updateDashboardAndCards();
     this.onDoneEditing();
   }
 
@@ -233,7 +245,6 @@ class DashboardHeader extends Component {
       isBookmarked,
       isEditing,
       isFullscreen,
-      isEditable,
       location,
       onFullscreenChange,
       createBookmark,
@@ -246,7 +257,7 @@ class DashboardHeader extends Component {
       databases,
     } = this.props;
 
-    const canEdit = dashboard.can_write && isEditable && !!dashboard;
+    const canEdit = dashboard.can_write;
 
     const hasModelActionsEnabled = Object.values(databases).some(
       hasDatabaseActionsEnabled,
@@ -368,6 +379,7 @@ class DashboardHeader extends Component {
       buttons.push(
         <Tooltip key="edit-dashboard" tooltip={t`Edit dashboard`}>
           <DashboardHeaderButton
+            visibleOnSmallScreen={false}
             key="edit"
             aria-label={t`Edit dashboard`}
             data-metabase-event="Dashboard;Edit"
@@ -402,7 +414,7 @@ class DashboardHeader extends Component {
         icon: "document",
         testId: "dashboard-export-pdf-button",
         action: () => {
-          this.saveAsImage();
+          this.saveAsPDF();
         },
       });
 
@@ -461,10 +473,12 @@ class DashboardHeader extends Component {
     return buttons;
   }
 
-  saveAsImage = async () => {
+  saveAsPDF = async () => {
     const { dashboard } = this.props;
     const cardNodeSelector = "#Dashboard-Cards-Container";
-    await saveDashboardPdf(cardNodeSelector, dashboard.name);
+    await saveDashboardPdf(cardNodeSelector, dashboard.name).then(() => {
+      trackExportDashboardToPDF(dashboard.id);
+    });
   };
 
   render() {
@@ -477,14 +491,14 @@ class DashboardHeader extends Component {
       setSidebar,
       isHomepageDashboard,
     } = this.props;
-
     const hasLastEditInfo = dashboard["last-edit-info"] != null;
 
     return (
-      <DashboardHeaderView
+      <DashboardHeaderComponent
         headerClassName="wrapper"
         objectType="dashboard"
         analyticsContext="Dashboard"
+        location={this.props.location}
         dashboard={dashboard}
         isEditing={isEditing}
         isBadgeVisible={!isEditing && !isFullscreen && isAdditionalInfoVisible}
@@ -501,7 +515,6 @@ class DashboardHeader extends Component {
         editingButtons={this.getEditingButtons()}
         setDashboardAttribute={setDashboardAttribute}
         onLastEditInfoClick={() => setSidebar({ name: SIDEBAR_NAME.info })}
-        onSave={() => this.onSave(true)}
       />
     );
   }

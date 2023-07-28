@@ -7,6 +7,7 @@
    [metabase.analytics.snowplow :as snowplow]
    [metabase.api.common :as api]
    [metabase.api.table :as api.table]
+   [metabase.config :as config]
    [metabase.db.connection :as mdb.connection]
    [metabase.db.query :as mdb.query]
    [metabase.driver :as driver]
@@ -47,7 +48,6 @@
    [metabase.util.schema :as su]
    [schema.core :as s]
    [toucan.db :as db]
-   [toucan.models :as models]
    [toucan2.core :as t2]))
 
 (set! *warn-on-reflection* true)
@@ -144,7 +144,7 @@
   {:pre [(#{:card :dataset} question-type)]}
   (when-let [ids-of-dbs-that-support-source-queries (not-empty (ids-of-dbs-that-support-source-queries))]
     (transduce
-     (comp (map (partial models/do-post-select Card))
+     (comp (map (partial mi/do-after-select Card))
            (filter card-can-be-used-as-source-query?)
            xform)
      (completing conj #(t2/hydrate % :collection))
@@ -206,9 +206,9 @@
   name and ID of these databases, removing all other fields."
   [dbs]
   (let [filtered-dbs
-        (if-let [f (u/ignore-exceptions
-                    (classloader/require 'metabase-enterprise.advanced-permissions.common)
-                    (resolve 'metabase-enterprise.advanced-permissions.common/filter-databases-by-data-model-perms))]
+        (if-let [f (when config/ee-available?
+                     (classloader/require 'metabase-enterprise.advanced-permissions.common)
+                     (resolve 'metabase-enterprise.advanced-permissions.common/filter-databases-by-data-model-perms))]
           (f dbs)
           dbs)]
     (map
@@ -1039,7 +1039,10 @@
   {id ms/PositiveInt}
   (let [db (api/check-404 (t2/select-one Database id))]
     (api/check-403 (mi/can-write? db))
-    (driver/syncable-schemas (:engine db) db)))
+    (->> db
+         (driver/syncable-schemas (:engine db))
+         (vec)
+         (sort))))
 
 (api/defendpoint GET "/:id/schemas"
   "Returns a list of all the schemas with tables found for the database `id`. Excludes schemas with no tables."
@@ -1116,9 +1119,9 @@
                              :visibility_type nil
                              {:order-by [[:display_name :asc]]}))]
      (if include_editable_data_model
-       (if-let [f (u/ignore-exceptions
-                   (classloader/require 'metabase-enterprise.advanced-permissions.common)
-                   (resolve 'metabase-enterprise.advanced-permissions.common/filter-tables-by-data-model-perms))]
+       (if-let [f (when config/ee-available?
+                    (classloader/require 'metabase-enterprise.advanced-permissions.common)
+                    (resolve 'metabase-enterprise.advanced-permissions.common/filter-tables-by-data-model-perms))]
          (f tables)
          tables)
        (filter mi/can-read? tables)))))

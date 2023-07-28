@@ -3,12 +3,16 @@ import {
   popover,
   appBar,
   restore,
+  setTokenFeatures,
+  describeEE,
 } from "e2e/support/helpers";
+import { ORDERS_QUESTION_ID } from "e2e/support/cypress_sample_instance_data";
 
-describe("scenarios > embedding > full app", () => {
+describeEE("scenarios > embedding > full app", () => {
   beforeEach(() => {
     restore();
     cy.signInAsAdmin();
+    setTokenFeatures("all");
     cy.intercept("POST", `/api/card/*/query`).as("getCardQuery");
     cy.intercept("POST", "/api/dashboard/**/query").as("getDashCardQuery");
     cy.intercept("GET", `/api/dashboard/*`).as("getDashboard");
@@ -16,26 +20,42 @@ describe("scenarios > embedding > full app", () => {
   });
 
   describe("home page navigation", () => {
+    it("should show the top and side nav by default", () => {
+      visitUrl({ url: "/" });
+      cy.wait("@getXrayDashboard");
+
+      appBar()
+        .should("be.visible")
+        .within(() => {
+          cy.findByTestId("main-logo").should("be.visible");
+          cy.button(/New/).should("not.exist");
+          cy.findByPlaceholderText("Search").should("not.exist");
+        });
+
+      sideNav().should("be.visible");
+    });
+
     it("should hide the top nav when nothing is shown", () => {
       visitUrl({ url: "/", qs: { side_nav: false, logo: false } });
+      cy.wait("@getXrayDashboard");
       appBar().should("not.exist");
     });
 
-    it("should show the top nav by default", () => {
-      visitUrl({ url: "/" });
-      appBar().should("be.visible");
-      cy.findByTestId("main-logo").should("be.visible");
-    });
-
-    it("should hide the top nav by a param", () => {
+    it("should hide the top nav by an explicit param", () => {
       visitUrl({ url: "/", qs: { top_nav: false } });
+      cy.wait("@getXrayDashboard");
       appBar().should("not.exist");
     });
 
     it("should not hide the top nav when the logo is still visible", () => {
-      visitUrl({ url: "/question/1", qs: { breadcrumbs: false } });
-      cy.findByTestId("main-logo").should("be.visible");
+      visitUrl({
+        url: "/question/" + ORDERS_QUESTION_ID,
+        qs: { breadcrumbs: false },
+      });
+      cy.wait("@getCardQuery");
+
       appBar().within(() => {
+        cy.findByTestId("main-logo").should("be.visible");
         cy.findByText("Our analytics").should("not.exist");
       });
     });
@@ -50,28 +70,24 @@ describe("scenarios > embedding > full app", () => {
           new_button: false,
         },
       });
+      cy.wait("@getXrayDashboard");
 
-      appBar().should("be.visible");
-      cy.button("Toggle sidebar").should("be.visible");
-    });
-
-    it("should show the top nav by a param", () => {
-      visitUrl({ url: "/" });
-      appBar().should("be.visible");
-      cy.findByTestId("main-logo").should("be.visible");
-      appBar().within(() => {
-        cy.button(/New/).should("not.exist");
-        cy.findByPlaceholderText("Search").should("not.exist");
-      });
+      sideNav().should("be.visible");
+      appBar()
+        .should("be.visible")
+        .within(() => {
+          cy.button("Toggle sidebar").should("be.visible").click();
+        });
+      sideNav().should("not.be.visible");
     });
 
     it("should hide the side nav by a param", () => {
       visitUrl({ url: "/", qs: { side_nav: false } });
       appBar().within(() => {
         cy.findByTestId("main-logo").should("be.visible");
+        cy.button("Toggle sidebar").should("not.exist");
       });
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("Our analytics").should("not.exist");
+      sideNav().should("not.exist");
     });
 
     it("should show question creation controls by a param", () => {
@@ -95,10 +111,11 @@ describe("scenarios > embedding > full app", () => {
         cy.findByPlaceholderText("Search…").should("be.visible");
       });
 
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("Our analytics").click();
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("Orders in a dashboard").should("be.visible");
+      sideNav().findByText("Our analytics").click();
+
+      cy.findAllByRole("rowgroup")
+        .should("contain", "Orders in a dashboard")
+        .and("be.visible");
 
       appBar().within(() => {
         cy.findByPlaceholderText("Search…").should("be.visible");
@@ -119,7 +136,7 @@ describe("scenarios > embedding > full app", () => {
 
   describe("questions", () => {
     it("should show the question header by default", () => {
-      visitQuestionUrl({ url: "/question/1" });
+      visitQuestionUrl({ url: "/question/" + ORDERS_QUESTION_ID });
 
       cy.findByTestId("qb-header").should("be.visible");
       cy.findByTestId("qb-header-left-side").realHover();
@@ -134,13 +151,19 @@ describe("scenarios > embedding > full app", () => {
     });
 
     it("should hide the question header by a param", () => {
-      visitQuestionUrl({ url: "/question/1", qs: { header: false } });
+      visitQuestionUrl({
+        url: "/question/" + ORDERS_QUESTION_ID,
+        qs: { header: false },
+      });
 
       cy.findByTestId("qb-header").should("not.exist");
     });
 
     it("should hide the question's additional info by a param", () => {
-      visitQuestionUrl({ url: "/question/1", qs: { additional_info: false } });
+      visitQuestionUrl({
+        url: "/question/" + ORDERS_QUESTION_ID,
+        qs: { additional_info: false },
+      });
 
       // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
       cy.findByText("Our analytics").should("be.visible");
@@ -149,7 +172,10 @@ describe("scenarios > embedding > full app", () => {
     });
 
     it("should hide the question's action buttons by a param", () => {
-      visitQuestionUrl({ url: "/question/1", qs: { action_buttons: false } });
+      visitQuestionUrl({
+        url: "/question/" + ORDERS_QUESTION_ID,
+        qs: { action_buttons: false },
+      });
 
       cy.icon("refresh").should("be.visible");
       cy.icon("notebook").should("not.exist");
@@ -202,10 +228,11 @@ describe("scenarios > embedding > full app", () => {
       // This can't be unit test in AppBar since the logic to hide the AppBar is in its parent component
       it("should hide main header when there's nothing to display there", () => {
         visitQuestionUrl({
-          url: "/question/1",
+          url: "/question/" + ORDERS_QUESTION_ID,
           qs: { side_nav: false, logo: false, breadcrumbs: false },
         });
-        cy.findByRole("banner").should("not.exist");
+        cy.findByDisplayValue("Orders");
+        cy.findByTestId("app-bar").should("not.exist");
         cy.findByTestId("main-logo").should("not.exist");
         cy.icon("sidebar_closed").should("not.exist");
         cy.button("Toggle sidebar").should("not.exist");
@@ -220,10 +247,11 @@ describe("scenarios > embedding > full app", () => {
       // This can't be unit test in AppBar since the logic to hide the AppBar is in its parent component
       it("should hide main header when there's nothing to display there", () => {
         visitQuestionUrl({
-          url: "/question/1",
+          url: "/question/" + ORDERS_QUESTION_ID,
           qs: { side_nav: false, logo: false, breadcrumbs: false },
         });
-        cy.findByRole("banner").should("not.exist");
+        cy.findByDisplayValue("Orders");
+        cy.findByTestId("app-bar").should("not.exist");
         cy.findByTestId("main-logo").should("not.exist");
         cy.icon("sidebar_closed").should("not.exist");
         cy.button("Toggle sidebar").should("not.exist");
@@ -265,7 +293,7 @@ describe("scenarios > embedding > full app", () => {
     it("should preserve embedding options with click behavior (metabase#24756)", () => {
       addLinkClickBehavior({
         dashboardId: 1,
-        linkTemplate: "/question/1",
+        linkTemplate: "/question/" + ORDERS_QUESTION_ID,
       });
       visitDashboardUrl({
         url: "/dashboard/1",
@@ -306,9 +334,10 @@ describe("scenarios > embedding > full app", () => {
   });
 });
 
-const visitUrl = url => {
+const visitUrl = ({ url, qs }) => {
   cy.visit({
-    ...url,
+    url,
+    qs,
     onBeforeLoad(window) {
       // cypress runs all tests in an iframe and the app uses this property to avoid embedding mode for all tests
       // by removing the property the app would work in embedding mode
@@ -317,19 +346,19 @@ const visitUrl = url => {
   });
 };
 
-const visitQuestionUrl = url => {
-  visitUrl(url);
+const visitQuestionUrl = urlOptions => {
+  visitUrl(urlOptions);
   cy.wait("@getCardQuery");
 };
 
-const visitDashboardUrl = url => {
-  visitUrl(url);
+const visitDashboardUrl = urlOptions => {
+  visitUrl(urlOptions);
   cy.wait("@getDashboard");
   cy.wait("@getDashCardQuery");
 };
 
-const visitXrayDashboardUrl = url => {
-  visitUrl(url);
+const visitXrayDashboardUrl = urlOptions => {
+  visitUrl(urlOptions);
   cy.wait("@getXrayDashboard");
 };
 
@@ -348,4 +377,8 @@ const addLinkClickBehavior = ({ dashboardId, linkTemplate }) => {
       })),
     });
   });
+};
+
+const sideNav = () => {
+  return cy.findByTestId("main-navbar-root");
 };

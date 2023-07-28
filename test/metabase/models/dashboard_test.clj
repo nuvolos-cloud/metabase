@@ -23,7 +23,6 @@
    [toucan2.core :as t2]
    [toucan2.tools.with-temp :as t2.with-temp])
   (:import
-   (java.util UUID)
    (java.time LocalDateTime)))
 
 (set! *warn-on-reflection* true)
@@ -60,10 +59,8 @@
               :archived            false
               :collection_position nil
               :enable_embedding    false
-              :made_public_by_id   nil
               :embedding_params    nil
-              :parameters          []
-              :public_uuid         nil}
+              :parameters          []}
              (update (revision/serialize-instance Dashboard (:id dashboard) dashboard)
                      :cards
                      (fn [[{:keys [id card_id series], :as card}]]
@@ -268,7 +265,7 @@
                                                                 value)
                                (= col :made_public_by_id) (mt/user->id :crowberto)
                                (= col :embedding_params)  {:category_name "locked"}
-                               (= col :public_uuid)       (str (UUID/randomUUID))
+                               (= col :public_uuid)       (str (random-uuid))
                                (int? value)               (inc value)
                                (boolean? value)           (not value)
                                (string? value)            (str value "_changed")))]
@@ -366,10 +363,8 @@
                                 :archived            false
                                 :collection_position nil
                                 :enable_embedding    false
-                                :made_public_by_id   nil
                                 :embedding_params    nil
-                                :parameters          []
-                                :public_uuid         nil}
+                                :parameters          []}
           serialized-dashboard (revision/serialize-instance Dashboard (:id dashboard) dashboard)]
       (testing "original state"
         (is (= {:name                "Test Dashboard"
@@ -393,10 +388,8 @@
                 :archived            false
                 :collection_position nil
                 :enable_embedding    false
-                :made_public_by_id   nil
                 :embedding_params    nil
-                :parameters          []
-                :public_uuid         nil}
+                :parameters          []}
                (update serialized-dashboard :cards check-ids))))
       (testing "delete the dashcard and modify the dash attributes"
         (dashboard-card/delete-dashboard-cards! [(:id dashboard-card)])
@@ -431,10 +424,8 @@
                 :archived            false
                 :collection_position nil
                 :enable_embedding    false
-                :made_public_by_id   nil
                 :embedding_params    nil
-                :parameters          []
-                :public_uuid         nil}
+                :parameters          []}
                (update (revision/serialize-instance Dashboard dashboard-id (t2/select-one Dashboard :id dashboard-id))
                        :cards check-ids))))
       (testing "revert back to the empty state"
@@ -648,13 +639,13 @@
 (deftest public-sharing-test
   (testing "test that a Dashboard's :public_uuid comes back if public sharing is enabled..."
     (tu/with-temporary-setting-values [enable-public-sharing true]
-      (t2.with-temp/with-temp [Dashboard dashboard {:public_uuid (str (java.util.UUID/randomUUID))}]
+      (t2.with-temp/with-temp [Dashboard dashboard {:public_uuid (str (random-uuid))}]
         (is (schema= u/uuid-regex
                      (:public_uuid dashboard)))))
 
     (testing "...but if public sharing is *disabled* it should come back as `nil`"
       (tu/with-temporary-setting-values [enable-public-sharing false]
-        (t2.with-temp/with-temp [Dashboard dashboard {:public_uuid (str (java.util.UUID/randomUUID))}]
+        (t2.with-temp/with-temp [Dashboard dashboard {:public_uuid (str (random-uuid))}]
           (is (= nil
                  (:public_uuid dashboard))))))))
 

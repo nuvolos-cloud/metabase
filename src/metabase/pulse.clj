@@ -26,6 +26,7 @@
    [metabase.query-processor.dashboard :as qp.dashboard]
    [metabase.query-processor.timezone :as qp.timezone]
    [metabase.server.middleware.session :as mw.session]
+   [metabase.shared.parameters.parameters :as shared.params]
    [metabase.util :as u]
    [metabase.util.i18n :refer [deferred-tru trs tru]]
    [metabase.util.log :as log]
@@ -92,14 +93,6 @@
     (catch Throwable e
       (log/warn e (trs "Error running query for Card {0}" card-or-id)))))
 
-(defn- dashcard-comparator
-  "Comparator that determines which of two dashcards comes first in the layout order used for pulses.
-  This is the same order used on the frontend for the mobile layout. Orders cards left-to-right, then top-to-bottom"
-  [dashcard-1 dashcard-2]
-  (if-not (= (:row dashcard-1) (:row dashcard-2))
-    (compare (:row dashcard-1) (:row dashcard-2))
-    (compare (:col dashcard-1) (:col dashcard-2))))
-
 (defn virtual-card-of-type?
   "Check if dashcard is a virtual with type `ttype`, if `true` returns the dashcard, else returns `nil`.
 
@@ -150,6 +143,12 @@
         (when (mi/can-read? instance)
           (link-card->text-part (assoc link-card :entity instance)))))))
 
+(defn- escape-heading-markdown
+  [dashcard]
+  (if (= "heading" (get-in dashcard [:visualization_settings :virtual_card :display]))
+    (update-in dashcard [:visualization_settings :text] #(str "## " (shared.params/escape-chars % shared.params/escaped-chars-regex)))
+    dashcard))
+
 (defn- dashcard->part
   "Given a dashcard returns its part based on its type.
 
@@ -175,12 +174,13 @@
     (let [parameters (merge-default-values (params/parameters pulse dashboard))]
       (-> dashcard
           (params/process-virtual-dashcard parameters)
+          escape-heading-markdown
           :visualization_settings
           (assoc :type :text)))))
 
 (defn- dashcards->part
   [dashcards pulse dashboard]
-  (let [ordered-dashcards (sort dashcard-comparator dashcards)]
+  (let [ordered-dashcards (sort dashboard-card/dashcard-comparator dashcards)]
     (doall (for [dashcard ordered-dashcards
                  :let  [part (dashcard->part dashcard pulse dashboard)]
                  :when (some? part)]
@@ -463,7 +463,7 @@
                               (construct-pulse-email email-subject user (messages/render-alert-email timezone pulse channel parts (ui-logic/find-goal-value first-part))))
         email-to-nonusers   (for [non-user (map :email non-user-recipients)]
                               (construct-pulse-email email-subject non-user (messages/render-alert-email timezone pulse channel parts (ui-logic/find-goal-value first-part))))]
-        (concat email-to-users email-to-nonusers)))
+       (concat email-to-users email-to-nonusers)))
 
 (defmethod notification [:alert :slack]
   [pulse parts {{channel-id :channel} :details}]
