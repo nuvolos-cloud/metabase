@@ -4,7 +4,7 @@
    [clojure.java.jdbc :as jdbc]
    [clojure.set :as set]
    [clojure.string :as str]
-   [java-time :as t]
+   [java-time.api :as t]
    [medley.core :as m]
    [metabase.driver :as driver]
    [metabase.driver.common :as driver.common]
@@ -22,6 +22,7 @@
    [metabase.driver.sql.util :as sql.u]
    [metabase.driver.sql.util.unprepare :as unprepare]
    [metabase.driver.sync :as driver.s]
+   [metabase.lib.metadata :as lib.metadata]
    [metabase.models.secret :as secret]
    [metabase.query-processor.error-type :as qp.error-type]
    [metabase.query-processor.store :as qp.store]
@@ -36,16 +37,17 @@
   (:import
    (java.io File)
    (java.sql Connection DatabaseMetaData ResultSet Types)
-   (java.time OffsetDateTime ZonedDateTime)))
+   (java.time OffsetDateTime OffsetTime ZonedDateTime)))
 
 (set! *warn-on-reflection* true)
 
 (driver/register! :snowflake, :parent #{:sql-jdbc ::sql-jdbc.legacy/use-legacy-classes-for-read-and-set})
 
-(doseq [[feature supported?] {:datetime-diff            true
-                              :now                      true
-                              :convert-timezone         true
-                              :connection-impersonation true}]
+(doseq [[feature supported?] {:datetime-diff                          true
+                              :now                                    true
+                              :convert-timezone                       true
+                              :connection-impersonation               true
+                              :connection-impersonation-requires-role true}]
   (defmethod driver/database-supports? [:snowflake feature] [_driver _feature _db] supported?))
 
 (defmethod driver/humanize-connection-error-message :snowflake
@@ -199,8 +201,15 @@
    [:raw (int amount)]
    (h2x/->timestamp hsql-form)])
 
-(defn- extract    [unit expr] [:date_part  unit (h2x/->timestamp expr)])
-(defn- date-trunc [unit expr] [:date_trunc unit (h2x/->timestamp expr)])
+(defn- extract
+  [unit expr]
+  (-> [:date_part unit (h2x/->timestamp expr)]
+      (h2x/with-database-type-info "integer")))
+
+(defn- date-trunc
+  [unit expr]
+  (-> [:date_trunc unit expr]
+      (h2x/with-database-type-info (h2x/database-type expr))))
 
 (defmethod sql.qp/date [:snowflake :default]         [_ _ expr] expr)
 (defmethod sql.qp/date [:snowflake :minute]          [_ _ expr] (date-trunc :minute expr))
@@ -331,7 +340,7 @@
   ;; the store is always initialized when running QP queries; for some stuff like the test extensions DDL statements
   ;; it won't be, *but* they should already be qualified by database name anyway
   (when (qp.store/initialized?)
-    (db-name (qp.store/database))))
+    (db-name (lib.metadata/database (qp.store/metadata-provider)))))
 
 ;; unless we're currently using a table alias, we need to prepend Table and Field identifiers with the DB name for the
 ;; query
@@ -386,8 +395,7 @@
 (defmethod driver/table-rows-seq :snowflake
   [driver database table]
   (sql-jdbc/query driver database {:select [:*]
-                                   :from   [[(qp.store/with-store
-                                               (qp.store/fetch-and-store-database! (u/the-id database))
+                                   :from   [[(qp.store/with-metadata-provider (u/the-id database)
                                                (sql.qp/with-driver-honey-sql-version driver
                                                  (sql.qp/->honeysql driver table)))]]}))
 
@@ -395,8 +403,7 @@
   [driver database]
   (let [db-name          (db-name database)
         excluded-schemas (set (sql-jdbc.sync/excluded-schemas driver))]
-    (qp.store/with-store
-      (qp.store/fetch-and-store-database! (u/the-id database))
+    (qp.store/with-metadata-provider (u/the-id database)
       (let [sql             (format "SHOW OBJECTS IN DATABASE \"%s\"" db-name)
             schema-patterns (driver.s/db-details->schema-filter-patterns "schema-filters" database)
             [inclusion-patterns exclusion-patterns] schema-patterns]
@@ -452,11 +459,11 @@
 (defmethod sql-jdbc.describe-table/get-table-pks :snowflake
   [_driver ^Connection conn db-name-or-nil table]
   (let [^DatabaseMetaData metadata (.getMetaData conn)]
-    (into #{} (sql-jdbc.sync.common/reducible-results
-               #(.getPrimaryKeys metadata db-name-or-nil
-                                 (-> table :schema escape-name-for-metadata)
-                                 (-> table :name escape-name-for-metadata))
-               (fn [^ResultSet rs] #(.getString rs "COLUMN_NAME"))))))
+    (into [] (sql-jdbc.sync.common/reducible-results
+              #(.getPrimaryKeys metadata db-name-or-nil
+                                (-> table :schema escape-name-for-metadata)
+                                (-> table :name escape-name-for-metadata))
+              (fn [^ResultSet rs] #(.getString rs "COLUMN_NAME"))))))
 
 (defn- describe-table-fks*
   "Stolen from [[sql-jdbc.describe-table]].
@@ -492,22 +499,19 @@
   [driver database table]
   (describe-table-fks driver database table (db-name database)))
 
-(defmethod sql-jdbc.execute/set-timezone-sql :snowflake [_] "ALTER SESSION SET TIMEZONE = %s;")
-
 (defmethod sql.qp/current-datetime-honeysql-form :snowflake [_] :%current_timestamp)
 
-;; See https://docs.snowflake.net/manuals/sql-reference/data-types-datetime.html#timestamp.
-(defmethod driver.common/current-db-time-date-formatters :snowflake
-  [_]
-  (driver.common/create-db-time-formatters "yyyy-MM-dd HH:mm:ss.SSSSSSSSS Z"))
+(defmethod sql-jdbc.execute/set-timezone-sql :snowflake [_] "ALTER SESSION SET TIMEZONE = %s;")
 
-(defmethod driver.common/current-db-time-native-query :snowflake
-  [_]
-  "select to_char(current_timestamp, 'YYYY-MM-DD HH24:MI:SS.FF TZHTZM')")
-
-(defmethod driver/current-db-time :snowflake
-  [& args]
-  (apply driver.common/current-db-time args))
+(defmethod driver/db-default-timezone :snowflake
+  [driver database]
+  (sql-jdbc.execute/do-with-connection-with-options
+   driver database nil
+   (fn [^java.sql.Connection conn]
+     (with-open [stmt (.prepareStatement conn "show parameters like 'TIMEZONE';")
+                 rset (.executeQuery stmt)]
+       (when (.next rset)
+         (.getString rset "default"))))))
 
 (defmethod sql-jdbc.sync/excluded-schemas :snowflake
   [_]
@@ -535,6 +539,10 @@
 (defmethod unprepare/unprepare-value [:snowflake ZonedDateTime]
   [driver t]
   (unprepare/unprepare-value driver (t/offset-date-time t)))
+
+(defmethod unprepare/unprepare-value [:snowflake OffsetTime]
+  [driver t]
+  (unprepare/unprepare-value driver (t/local-time (t/with-offset-same-instant t (t/zone-offset 0)))))
 
 ;; Like Vertica, Snowflake doesn't seem to be able to return a LocalTime/OffsetTime like everyone else, but it can
 ;; return a String that we can parse
@@ -584,10 +592,12 @@
 
 (defmethod driver.sql/set-role-statement :snowflake
   [_ role]
-  (format "USE ROLE %s;" role))
+  (let [special-chars-pattern #"[^a-zA-Z0-9_]"
+        needs-quote           (re-find special-chars-pattern role)]
+    (if needs-quote
+      (format "USE ROLE \"%s\";" role)
+      (format "USE ROLE %s;" role))))
 
 (defmethod driver.sql/default-database-role :snowflake
   [_ database]
-  (or
-   (-> database :details :role)
-   "ACCOUNTADMIN"))
+  (-> database :details :role))

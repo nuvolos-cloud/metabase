@@ -1,5 +1,4 @@
-import { HTMLAttributes } from "react";
-import * as React from "react";
+import type { ComponentType, HTMLAttributes, ReactNode } from "react";
 import { t } from "ttag";
 
 import type { IconName, IconProps } from "metabase/core/components/Icon";
@@ -15,6 +14,7 @@ import type {
   Bookmark,
   Collection,
   CollectionAuthorityLevelConfig,
+  CollectionInstanceAnaltyicsConfig,
   Dataset,
   Group,
   GroupPermissions,
@@ -23,11 +23,16 @@ import type {
   User,
   UserListResult,
 } from "metabase-types/api";
+
+import { UNABLE_TO_CHANGE_ADMIN_PERMISSIONS } from "metabase/admin/permissions/constants/messages";
+
 import type { AdminPathKey, State } from "metabase-types/store";
+import type { ADMIN_SETTINGS_SECTIONS } from "metabase/admin/settings/selectors";
+import type { SearchFilterComponent } from "metabase/search/types";
 import type Question from "metabase-lib/Question";
 
 import type Database from "metabase-lib/metadata/Database";
-import { GetAuthProviders, PluginGroupManagersType } from "./types";
+import type { GetAuthProviders, PluginGroupManagersType } from "./types";
 
 // functions called when the application is started
 export const PLUGIN_APP_INIT_FUCTIONS = [];
@@ -54,7 +59,9 @@ export const PLUGIN_ADMIN_TOOLS = {
 };
 
 // functions that update the sections
-export const PLUGIN_ADMIN_SETTINGS_UPDATES = [];
+export const PLUGIN_ADMIN_SETTINGS_UPDATES: ((
+  sections: typeof ADMIN_SETTINGS_SECTIONS,
+) => void)[] = [];
 
 // admin permissions
 export const PLUGIN_ADMIN_PERMISSIONS_DATABASE_ROUTES = [];
@@ -121,7 +128,7 @@ export const PLUGIN_SELECTORS = {
   getIsWhiteLabeling: (_state: State) => false,
 };
 
-export const PLUGIN_FORM_WIDGETS: Record<string, React.ComponentType<any>> = {};
+export const PLUGIN_FORM_WIDGETS: Record<string, ComponentType<any>> = {};
 
 // snippet sidebar
 export const PLUGIN_SNIPPET_SIDEBAR_PLUS_MENU_OPTIONS = [];
@@ -149,16 +156,38 @@ export const PLUGIN_COLLECTIONS = {
   AUTHORITY_LEVEL: {
     [JSON.stringify(AUTHORITY_LEVEL_REGULAR.type)]: AUTHORITY_LEVEL_REGULAR,
   },
+  COLLECTION_TYPES: {
+    [JSON.stringify(AUTHORITY_LEVEL_REGULAR.type)]: AUTHORITY_LEVEL_REGULAR,
+  },
   REGULAR_COLLECTION: AUTHORITY_LEVEL_REGULAR,
   isRegularCollection: (_: Partial<Collection> | Bookmark) => true,
+  getCollectionType: (
+    _: Partial<Collection>,
+  ): CollectionAuthorityLevelConfig | CollectionInstanceAnaltyicsConfig =>
+    AUTHORITY_LEVEL_REGULAR,
+  getInstanceAnalyticsCustomCollection: (
+    collections: Collection[],
+  ): Collection | null => null,
+  CUSTOM_INSTANCE_ANALYTICS_COLLECTION_ENTITY_ID: "",
+  INSTANCE_ANALYTICS_ADMIN_READONLY_MESSAGE: UNABLE_TO_CHANGE_ADMIN_PERMISSIONS,
   getAuthorityLevelMenuItems: (
     _collection: Collection,
     _onUpdate: (collection: Collection, values: Partial<Collection>) => void,
   ): AuthorityLevelMenuItem[] => [],
 };
 
-type CollectionAuthorityLevelIcon = React.ComponentType<
-  Omit<IconProps, "name" | "tooltip"> & { collection: Collection }
+export type CollectionAuthorityLevelIcon = ComponentType<
+  Omit<IconProps, "name" | "tooltip"> & {
+    collection: Pick<Collection, "authority_level">;
+    tooltip?: "default" | "belonging";
+  }
+>;
+
+type CollectionInstanceAnalyticsIcon = React.ComponentType<
+  Omit<IconProps, "name"> & {
+    collection: Collection;
+    entity: "collection" | "question" | "model" | "dashboard";
+  }
 >;
 
 type FormCollectionAuthorityLevelPicker = React.ComponentType<
@@ -170,6 +199,8 @@ export const PLUGIN_COLLECTION_COMPONENTS = {
     PluginPlaceholder as CollectionAuthorityLevelIcon,
   FormCollectionAuthorityLevelPicker:
     PluginPlaceholder as FormCollectionAuthorityLevelPicker,
+  CollectionInstanceAnalyticsIcon:
+    PluginPlaceholder as CollectionInstanceAnalyticsIcon,
 };
 
 export type RevisionOrModerationEvent = {
@@ -203,7 +234,6 @@ export const PLUGIN_MODERATION = {
 
 export const PLUGIN_CACHING = {
   dashboardCacheTTLFormField: null,
-  databaseCacheTTLFormField: null,
   questionCacheTTLFormField: null,
   getQuestionsImplicitCacheTTL: (question?: any) => null,
   QuestionCacheSection: PluginPlaceholder,
@@ -257,7 +287,7 @@ export const PLUGIN_FEATURE_LEVEL_PERMISSIONS = {
 };
 
 export const PLUGIN_APPLICATION_PERMISSIONS = {
-  getRoutes: (): React.ReactNode => null,
+  getRoutes: (): ReactNode => null,
   tabs: [] as any,
   selectors: {
     canManageSubscriptions: (_state: any) => true,
@@ -284,4 +314,8 @@ export const PLUGIN_MODEL_PERSISTENCE = {
 
 export const PLUGIN_EMBEDDING = {
   isEnabled: () => false,
+};
+
+export const PLUGIN_CONTENT_VERIFICATION = {
+  VerifiedFilter: {} as SearchFilterComponent<"verified">,
 };

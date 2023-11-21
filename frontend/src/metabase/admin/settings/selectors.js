@@ -16,6 +16,8 @@ import { refreshCurrentUser } from "metabase/redux/user";
 
 import { isPersonalCollectionOrChild } from "metabase/collections/utils";
 
+import { SMTPConnectionForm } from "metabase/admin/settings/components/Email/SMTPConnectionForm";
+
 import { updateSetting } from "./settings";
 
 import SettingCommaDelimitedInput from "./components/widgets/SettingCommaDelimitedInput";
@@ -40,7 +42,8 @@ import ModelCachingScheduleWidget from "./components/widgets/ModelCachingSchedul
 import SectionDivider from "./components/widgets/SectionDivider";
 
 import SettingsUpdatesForm from "./components/SettingsUpdatesForm/SettingsUpdatesForm";
-import SettingsEmailForm from "./components/SettingsEmailForm";
+import { SettingsEmailForm } from "./components/Email/SettingsEmailForm";
+import { BccToggleWidget } from "./components/Email/BccToggleWidget";
 import SetupCheckList from "./setup/components/SetupCheckList";
 import SlackSettings from "./slack/containers/SlackSettings";
 import {
@@ -73,7 +76,7 @@ function updateSectionsWithPlugins(sections) {
   }
 }
 
-const SECTIONS = {
+export const ADMIN_SETTINGS_SECTIONS = {
   setup: {
     name: t`Setup`,
     order: 10,
@@ -200,49 +203,6 @@ const SECTIONS = {
     component: SettingsEmailForm,
     settings: [
       {
-        key: "email-smtp-host",
-        display_name: t`SMTP Host`,
-        placeholder: "smtp.yourservice.com",
-        type: "string",
-        required: true,
-        autoFocus: true,
-        getHidden: () => MetabaseSettings.isHosted(),
-      },
-      {
-        key: "email-smtp-port",
-        display_name: t`SMTP Port`,
-        placeholder: "587",
-        type: "number",
-        required: true,
-        validations: [["integer", t`That's not a valid port number`]],
-        getHidden: () => MetabaseSettings.isHosted(),
-      },
-      {
-        key: "email-smtp-security",
-        display_name: t`SMTP Security`,
-        description: null,
-        type: "radio",
-        options: { none: "None", ssl: "SSL", tls: "TLS", starttls: "STARTTLS" },
-        defaultValue: "none",
-        getHidden: () => MetabaseSettings.isHosted(),
-      },
-      {
-        key: "email-smtp-username",
-        display_name: t`SMTP Username`,
-        description: null,
-        placeholder: "nicetoseeyou",
-        type: "string",
-        getHidden: () => MetabaseSettings.isHosted(),
-      },
-      {
-        key: "email-smtp-password",
-        display_name: t`SMTP Password`,
-        description: null,
-        placeholder: "Shhh...",
-        type: "password",
-        getHidden: () => MetabaseSettings.isHosted(),
-      },
-      {
         key: "email-from-name",
         display_name: t`From Name`,
         placeholder: "Metabase",
@@ -265,6 +225,64 @@ const SECTIONS = {
         required: false,
         widget: SettingCommaDelimitedInput,
         validations: [["email_list", t`That's not a valid email address`]],
+      },
+      {
+        key: "bcc-enabled?",
+        display_name: t`Add Recipients as CC or BCC`,
+        description: t`Control the visibility of recipients.`,
+        options: [
+          { value: true, name: t`BCC - Hide recipients` },
+          {
+            value: false,
+            name: t`CC - Disclose recipients`,
+          },
+        ],
+        defaultValue: true,
+        widget: BccToggleWidget,
+      },
+    ],
+  },
+  "email/smtp": {
+    component: SMTPConnectionForm,
+    settings: [
+      {
+        key: "email-smtp-host",
+        display_name: t`SMTP Host`,
+        placeholder: "smtp.yourservice.com",
+        type: "string",
+        required: true,
+        autoFocus: true,
+      },
+      {
+        key: "email-smtp-port",
+        display_name: t`SMTP Port`,
+        placeholder: "587",
+        type: "number",
+        required: true,
+        validations: [["integer", t`That's not a valid port number`]],
+      },
+      {
+        key: "email-smtp-security",
+        display_name: t`SMTP Security`,
+        description: null,
+        type: "radio",
+        options: { none: "None", ssl: "SSL", tls: "TLS", starttls: "STARTTLS" },
+        defaultValue: "none",
+      },
+      {
+        key: "email-smtp-username",
+        display_name: t`SMTP Username`,
+        description: null,
+        placeholder: "nicetoseeyou",
+        type: "string",
+      },
+      {
+        key: "email-smtp-password",
+        display_name: t`SMTP Password`,
+        description: null,
+        placeholder: "Shhh...",
+        type: "password",
+        getHidden: () => MetabaseSettings.isHosted(),
       },
     ],
   },
@@ -474,19 +492,19 @@ const SECTIONS = {
         getHidden: (_, derivedSettings) => !derivedSettings["enable-embedding"],
       },
       {
-        key: "-standalone-embeds",
+        key: "-static-embedding",
         widget: EmbeddingOption,
         getHidden: (_, derivedSettings) => !derivedSettings["enable-embedding"],
-        embedName: t`Standalone embeds`,
-        embedDescription: t`Securely embed individual questions and dashboards within other applications.`,
+        embedName: t`Static embedding`,
+        embedDescription: t`Embed dashboards, charts, and questions on your app or website with basic filters for insights with limited discovery.`,
         embedType: "standalone",
       },
       {
-        key: "-full-app-embedding",
+        key: "-interactive-embedding",
         widget: EmbeddingOption,
         getHidden: (_, derivedSettings) => !derivedSettings["enable-embedding"],
-        embedName: t`Full-app embedding`,
-        embedDescription: t`With this Pro/Enterprise feature you can embed the full Metabase app. Enable your users to drill-through to charts, browse collections, and use the graphical query builder.`,
+        embedName: t`Interactive embedding`,
+        embedDescription: t`With this Pro/Enterprise feature, you can let your customers query, visualize, and drill-down on their data with the full functionality of Metabase in your app or website, complete with your branding. Set permissions with SSO, down to the row- or column-level, so people only see what they need to.`,
         embedType: "full-app",
       },
     ],
@@ -503,7 +521,7 @@ const SECTIONS = {
                   t`Embedding`,
                   "/admin/settings/embedding-in-other-applications",
                 ],
-                [t`Standalone embeds`],
+                [t`Static embedding`],
               ]}
             />
           );
@@ -515,6 +533,12 @@ const SECTIONS = {
         description: t`Standalone Embed Secret Key used to sign JSON Web Tokens for requests to /api/embed endpoints. This lets you create a secure environment limited to specific users or organizations.`,
         widget: SecretKeyWidget,
         getHidden: (_, derivedSettings) => !derivedSettings["enable-embedding"],
+        props: {
+          confirmation: {
+            header: t`Regenerate embedding key?`,
+            dialog: t`This will cause existing embeds to stop working until they are updated with the new key.`,
+          },
+        },
       },
       {
         key: "-embedded-dashboards",
@@ -553,7 +577,7 @@ const SECTIONS = {
                   t`Embedding`,
                   "/admin/settings/embedding-in-other-applications",
                 ],
-                [t`Full-app embedding`],
+                [t`Interactive embedding`],
               ]}
             />
           );
@@ -711,7 +735,7 @@ const SECTIONS = {
 };
 
 const getSectionsWithPlugins = _.once(() =>
-  updateSectionsWithPlugins(SECTIONS),
+  updateSectionsWithPlugins(ADMIN_SETTINGS_SECTIONS),
 );
 
 export const getSettings = createSelector(

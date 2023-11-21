@@ -1,11 +1,11 @@
 import { createMockMetadata } from "__support__/metadata";
-import { checkNotNull } from "metabase/core/utils/types";
+import { checkNotNull } from "metabase/lib/types";
 import {
   createMockField,
   createMockFieldSettings,
   createMockParameter,
 } from "metabase-types/api/mocks";
-import { FieldSettingsMap } from "metabase-types/api";
+import type { FieldSettingsMap } from "metabase-types/api";
 import {
   formatInitialValue,
   getInputType,

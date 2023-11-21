@@ -5,11 +5,14 @@ import {
   visitEmbeddedPage,
   filterWidget,
   visitIframe,
+  getDashboardCard,
+  addOrUpdateDashboardCard,
 } from "e2e/support/helpers";
 
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
 import {
   questionDetails,
+  questionDetailsWithDefaults,
   dashboardDetails,
   mapParameters,
 } from "./shared/embedding-dashboard";
@@ -48,8 +51,7 @@ describe("scenarios > embedding > dashboard parameters", () => {
       });
 
       cy.icon("share").click();
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("Embed in your application").click();
+      cy.get(".Modal--full").findByText("Embed in your application").click();
 
       cy.findByRole("heading", { name: "Parameters" })
         .parent()
@@ -66,27 +68,22 @@ describe("scenarios > embedding > dashboard parameters", () => {
             });
         });
 
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("Editable").click();
+      popover().findByText("Editable").click();
 
-      cy.get("@allParameters").within(() => {
-        cy.findByText("Id")
-          .parent()
-          .within(() => {
-            cy.findByText("Disabled").click();
-          });
-      });
+      cy.get("@allParameters")
+        .findByText("Id")
+        .parent()
+        .findByText("Disabled")
+        .click();
 
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("Locked").click();
+      popover().findByText("Locked").click();
 
       // set the locked parameter's value
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("Preview Locked Parameters")
+      cy.findByTestId("embedding-settings")
+        .findByText("Preview Locked Parameters")
         .parent()
-        .within(() => {
-          cy.findByText("Id").click();
-        });
+        .findByText("Id")
+        .click();
 
       cy.findByPlaceholderText("Search by Name or enter an ID").type(
         "1{enter}3{enter}",
@@ -96,14 +93,10 @@ describe("scenarios > embedding > dashboard parameters", () => {
 
       // publish the embedded dashboard so that we can directly navigate to its url
       publishChanges(({ request }) => {
-        const actual = request.body.embedding_params;
-
-        const expected = {
+        assert.deepEqual(request.body.embedding_params, {
           id: "locked",
           name: "enabled",
-        };
-
-        assert.deepEqual(actual, expected);
+        });
       });
 
       // directly navigate to the embedded dashboard
@@ -115,17 +108,16 @@ describe("scenarios > embedding > dashboard parameters", () => {
       cy.get(".ScalarValue").invoke("text").should("eq", "2");
 
       // verify that disabled filters don't show up
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("Source").should("not.exist");
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("User").should("not.exist");
+      cy.findByTestId("dashboard-parameters-widget-container").within(() => {
+        cy.findByText("Source").should("not.exist");
+        cy.findByText("User").should("not.exist");
+      });
 
       // only Name parameter should be visible
       openFilterOptions("Name");
 
       cy.findByPlaceholderText("Search by Name").type("L");
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("Lina Heaney").click();
+      popover().findByText("Lina Heaney").click();
 
       cy.button("Add filter").click();
 
@@ -141,23 +133,19 @@ describe("scenarios > embedding > dashboard parameters", () => {
       });
 
       cy.icon("share").click();
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("Embed in your application").click();
+      cy.get(".Modal--full").findByText("Embed in your application").click();
 
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("Locked").click();
+      cy.get("@allParameters").findByText("Locked").click();
       popover().contains("Disabled").click();
 
-      // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
-      cy.findByText("Editable").click();
+      cy.get("@allParameters").findByText("Editable").click();
       popover().contains("Disabled").click();
 
       publishChanges(({ request }) => {
-        const actual = request.body.embedding_params;
-
-        const expected = { name: "disabled", id: "disabled" };
-
-        assert.deepEqual(actual, expected);
+        assert.deepEqual(request.body.embedding_params, {
+          name: "disabled",
+          id: "disabled",
+        });
       });
 
       visitIframe();
@@ -229,10 +217,159 @@ describe("scenarios > embedding > dashboard parameters", () => {
 
       cy.log("should accept url parameters");
 
-      cy.url().then(url => cy.visit(url + "?id=1&id=3"));
+      cy.location().then(location =>
+        cy.visit(`${location.origin}${location.pathname}?id=1&id=3`),
+      );
       // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
       cy.contains(".ScalarValue", "2");
     });
+  });
+
+  it("should render error message when `params` is not an object (metabase#14474)", () => {
+    cy.get("@dashboardId").then(dashboardId => {
+      cy.request("PUT", `/api/dashboard/${dashboardId}`, {
+        embedding_params: {
+          id: "enabled",
+          name: "enabled",
+          source: "enabled",
+          user_id: "enabled",
+        },
+        enable_embedding: true,
+      });
+
+      const invalidParamsValue = [];
+      const payload = {
+        resource: { dashboard: dashboardId },
+        params: invalidParamsValue,
+      };
+
+      visitEmbeddedPage(payload);
+
+      getDashboardCard()
+        .findByText("There was a problem displaying this chart.")
+        .should("be.visible");
+    });
+  });
+
+  it("should render error without crashing when embed query returns error (metabase#34954)", () => {
+    const categoryTemplateTag = {
+      type: "text",
+      name: "category",
+      id: "377a4a4a-179e-4d86-8263-f3b3887df15f",
+      "display-name": "Category",
+    };
+    const questionDetails = {
+      native: {
+        query: "Select * from products Where category = {{category}}",
+        "template-tags": {
+          category: categoryTemplateTag,
+        },
+      },
+    };
+
+    const dashboardParameter = {
+      name: "Category",
+      slug: "category",
+      id: "9cd1ee78",
+      type: "string/=",
+      sectionId: "string",
+      values_query_type: "none",
+    };
+    const dashboardDetails = {
+      name: 'dashboard with "category" parameter',
+      parameters: [dashboardParameter],
+    };
+
+    cy.createNativeQuestionAndDashboard({
+      questionDetails,
+      dashboardDetails,
+    }).then(({ body: { card_id, dashboard_id } }) => {
+      cy.wrap(dashboard_id).as("dashboardId2");
+
+      addOrUpdateDashboardCard({
+        card_id,
+        dashboard_id,
+        card: {
+          parameter_mappings: [
+            {
+              parameter_id: dashboardParameter.id,
+              card_id,
+              target: ["variable", ["template-tag", categoryTemplateTag.name]],
+            },
+          ],
+          visualization_settings: {
+            "card.hide_empty": true,
+          },
+        },
+      });
+
+      cy.request("PUT", `/api/dashboard/${dashboard_id}`, {
+        embedding_params: {
+          category: "enabled",
+        },
+        enable_embedding: true,
+      });
+
+      const payload = {
+        resource: { dashboard: dashboard_id },
+        params: {},
+      };
+
+      visitEmbeddedPage(payload);
+    });
+
+    cy.log("The whole page would have crashed before the fix at this point");
+    getDashboardCard()
+      .findByText("There was a problem displaying this chart.")
+      .should("be.visible");
+
+    cy.log("Add a filter to complete the query");
+    filterWidget().findByPlaceholderText("Category").type("Widget{enter}");
+
+    getDashboardCard()
+      .findByText("Practical Bronze Computer")
+      .should("be.visible");
+  });
+});
+
+describe("scenarios > embedding > dashboard parameters with defaults", () => {
+  beforeEach(() => {
+    restore();
+    cy.signInAsAdmin();
+
+    cy.createNativeQuestionAndDashboard({
+      questionDetails: questionDetailsWithDefaults,
+      dashboardDetails,
+    }).then(({ body: { id, card_id, dashboard_id } }) => {
+      cy.wrap(dashboard_id).as("dashboardId");
+
+      mapParameters({ id, card_id, dashboard_id });
+    });
+
+    cy.get("@dashboardId").then(dashboardId => {
+      visitDashboard(dashboardId);
+    });
+  });
+
+  it("card parameter defaults should apply for disabled parameters, but not for editable or locked parameters", () => {
+    cy.icon("share").click();
+    // eslint-disable-next-line no-unscoped-text-selectors -- deprecated usage
+    cy.findByText("Embed in your application").click();
+    // ID param is disabled by default
+    setParameter("Name", "Editable");
+    setParameter("Source", "Locked");
+    publishChanges(({ request }) => {
+      assert.deepEqual(request.body.embedding_params, {
+        source: "locked",
+        name: "enabled",
+      });
+    });
+    visitIframe();
+    // The ID default (1 and 2) should apply, because it is disabled.
+    // The Name default ('Lina Heaney') should not apply, because the Name param is editable and unset
+    // The Source default ('Facebook') should not apply because the param is locked but the value is unset
+    // If either the Name or Source default applied the result would be 0.
+    cy.get(".ScalarValue").invoke("text").should("eq", "2");
   });
 });
 
@@ -253,4 +390,14 @@ function publishChanges(callback) {
     );
     callback && callback(targetXhr);
   });
+}
+
+function setParameter(name, filter) {
+  cy.findByText("Which parameters can users of this embed use?")
+    .parent()
+    .findByText(name)
+    .siblings("a")
+    .click();
+
+  popover().contains(filter).click();
 }

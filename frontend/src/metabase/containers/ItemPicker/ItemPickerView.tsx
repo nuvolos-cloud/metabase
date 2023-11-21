@@ -1,9 +1,10 @@
 import { useCallback, useState } from "react";
-import * as React from "react";
+import type * as React from "react";
 import { t } from "ttag";
 
 import Breadcrumbs from "metabase/components/Breadcrumbs";
-import { Icon, IconProps } from "metabase/core/components/Icon";
+import type { IconProps } from "metabase/core/components/Icon";
+import { Icon } from "metabase/core/components/Icon";
 
 import { color } from "metabase/lib/colors";
 
@@ -119,7 +120,7 @@ function ItemPickerView<TId>({
       <ItemPickerHeader data-testid="item-picker-header">
         <Breadcrumbs crumbs={crumbs} />
         {showSearch && (
-          <SearchToggle onClick={handleOpenSearch}>
+          <SearchToggle onClick={handleOpenSearch} aria-label={t`Search`}>
             <Icon name="search" />
           </SearchToggle>
         )}

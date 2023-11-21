@@ -8,6 +8,7 @@ import {
 } from "e2e/support/helpers";
 
 import { SAMPLE_DATABASE } from "e2e/support/cypress_sample_database";
+import { NODATA_USER_ID } from "e2e/support/cypress_sample_instance_data";
 
 const { PRODUCTS, PRODUCTS_ID } = SAMPLE_DATABASE;
 
@@ -52,8 +53,8 @@ describeEE("issue 24966", () => {
     cy.signInAsAdmin();
     setTokenFeatures("all");
 
-    // Add user attribute to existing ("nodata" / id:3 user
-    cy.request("PUT", "/api/user/3", {
+    // Add user attribute to existing user
+    cy.request("PUT", `/api/user/${NODATA_USER_ID}`, {
       login_attributes: { attr_cat: "Gizmo" },
     });
 
@@ -82,8 +83,8 @@ describeEE("issue 24966", () => {
       cy.wrap(dashboard_id).as("dashboardId");
 
       // Connect the filter to the card
-      cy.request("PUT", `/api/dashboard/${dashboard_id}/cards`, {
-        cards: [
+      cy.request("PUT", `/api/dashboard/${dashboard_id}`, {
+        dashcards: [
           {
             id,
             card_id,

@@ -1,4 +1,4 @@
-import {
+import type {
   QueryBuilderDashboardState,
   QueryBuilderState,
   QueryBuilderUIControls,
@@ -7,6 +7,7 @@ import {
 export const createMockQueryBuilderUIControlsState = (
   opts?: Partial<QueryBuilderUIControls>,
 ): QueryBuilderUIControls => ({
+  isModifiedFromNotebook: false,
   isShowingDataReference: false,
   isShowingTemplateTagsEditor: false,
   isShowingNewbModal: false,

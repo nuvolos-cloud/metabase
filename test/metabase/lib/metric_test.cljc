@@ -3,7 +3,6 @@
    [clojure.test :refer [are deftest is testing]]
    [metabase.lib.core :as lib]
    [metabase.lib.metadata :as lib.metadata]
-   [metabase.lib.metadata.calculation :as lib.metadata.calculation]
    [metabase.lib.test-metadata :as meta]
    [metabase.lib.test-util :as lib.tu]
    #?@(:cljs ([metabase.test-runner.assert-exprs.approximately-equal]))))
@@ -19,14 +18,12 @@
 
 (def ^:private metadata-provider
   (lib.tu/mock-metadata-provider
-   {:database meta/metadata
-    :tables   [(meta/table-metadata :venues)]
-    :fields   [(meta/field-metadata :venues :price)]
-    :metrics  [{:id          metric-id
-                :name        "Sum of Cans"
-                :table-id    (meta/id :venues)
-                :definition  metric-definition
-                :description "Number of toucans plus number of pelicans"}]}))
+   meta/metadata-provider
+   {:metrics [{:id          metric-id
+               :name        "Sum of Cans"
+               :table-id    (meta/id :venues)
+               :definition  metric-definition
+               :description "Number of toucans plus number of pelicans"}]}))
 
 (def ^:private metric-clause
   [:metric {:lib/uuid (str (random-uuid))} metric-id])
@@ -40,7 +37,7 @@
 
 (deftest ^:parallel query-suggested-name-test
   (is (= "Venues, Sum of Cans"
-         (lib.metadata.calculation/suggested-name query-with-metric))))
+         (lib/suggested-name query-with-metric))))
 
 (deftest ^:parallel display-name-test
   (doseq [metric [metric-clause
@@ -52,8 +49,8 @@
                   "style = " (pr-str style))
       (is (= "Sum of Cans"
              (if style
-               (lib.metadata.calculation/display-name query-with-metric -1 metric style)
-               (lib.metadata.calculation/display-name query-with-metric metric)))))))
+               (lib/display-name query-with-metric -1 metric style)
+               (lib/display-name query-with-metric metric)))))))
 
 (deftest ^:parallel unknown-display-name-test
   (let [metric [:metric {} 1]]
@@ -63,23 +60,22 @@
       (testing (str "style = " (pr-str style))
         (is (= "[Unknown Metric]"
                (if style
-                 (lib.metadata.calculation/display-name query-with-metric -1 metric style)
-                 (lib.metadata.calculation/display-name query-with-metric metric))))))))
+                 (lib/display-name query-with-metric -1 metric style)
+                 (lib/display-name query-with-metric metric))))))))
 
 (deftest ^:parallel display-info-test
   (are [metric] (=? {:name              "sum_of_cans"
                      :display-name      "Sum of Cans"
                      :long-display-name "Sum of Cans"
                      :effective-type    :type/Integer
-                     :description       "Number of toucans plus number of pelicans"
-                     :selected          true}
-                    (lib.metadata.calculation/display-info query-with-metric metric))
+                     :description       "Number of toucans plus number of pelicans"}
+                    (lib/display-info query-with-metric metric))
     metric-clause
     metric-metadata))
 
 (deftest ^:parallel display-info-unselected-metric-test
   (testing "Include `:selected false` in display info for Metrics not in aggregations"
-    (are [metric] (not (:selected (lib.metadata.calculation/display-info lib.tu/venues-query metric)))
+    (are [metric] (not (:selected (lib/display-info lib.tu/venues-query metric)))
       metric-clause
       metric-metadata)))
 
@@ -87,27 +83,41 @@
   (is (=? {:effective-type    :type/*
            :display-name      "[Unknown Metric]"
            :long-display-name "[Unknown Metric]"}
-          (lib.metadata.calculation/display-info query-with-metric [:metric {} 1]))))
+          (lib/display-info query-with-metric [:metric {} 1]))))
 
 (deftest ^:parallel type-of-test
   (are [metric] (= :type/Integer
-                   (lib.metadata.calculation/type-of query-with-metric metric))
+                   (lib/type-of query-with-metric metric))
     metric-clause
     metric-metadata))
 
 (deftest ^:parallel unknown-type-of-test
   (is (= :type/*
-         (lib.metadata.calculation/type-of query-with-metric [:metric {} 1]))))
+         (lib/type-of query-with-metric [:metric {} 1]))))
 
 (deftest ^:parallel available-metrics-test
-  (testing "Should return Metrics with the same Table ID as query's `:source-table`"
-    (is (=? [{:lib/type    :metadata/metric
-              :id          metric-id
-              :name        "Sum of Cans"
-              :table-id    (meta/id :venues)
-              :definition  metric-definition
-              :description "Number of toucans plus number of pelicans"}]
-            (lib/available-metrics (lib/query metadata-provider (meta/table-metadata :venues))))))
+  (let [expected-metric-metadata {:lib/type    :metadata/metric
+                                  :id          metric-id
+                                  :name        "Sum of Cans"
+                                  :table-id    (meta/id :venues)
+                                  :definition  metric-definition
+                                  :description "Number of toucans plus number of pelicans"}]
+    (testing "Should return Metrics with the same Table ID as query's `:source-table`"
+      (is (=? [expected-metric-metadata]
+              (lib/available-metrics (lib/query metadata-provider (meta/table-metadata :venues))))))
+    (testing "Should return the position in the list of aggregations"
+      (let [metrics (lib/available-metrics query-with-metric)]
+        (is (=? [(assoc expected-metric-metadata :aggregation-position 0)]
+                metrics))
+        (testing "Display info should contains aggregation-position"
+          (is (=? [{:name                 "sum_of_cans",
+                    :display-name         "Sum of Cans",
+                    :long-display-name    "Sum of Cans",
+                    :effective-type       :type/Integer,
+                    :description          "Number of toucans plus number of pelicans",
+                    :aggregation-position 0}]
+                  (map #(lib/display-info query-with-metric %)
+                       metrics)))))))
   (testing "query with different Table -- don't return Metrics"
     (is (nil? (lib/available-metrics (lib/query metadata-provider (meta/table-metadata :orders)))))))
 
@@ -133,8 +143,7 @@
                       :display-name      "Sum of Cans"
                       :long-display-name "Sum of Cans"
                       :effective-type    :type/Integer
-                      :description       "Number of toucans plus number of pelicans"
-                      :selected          true}]
+                      :description       "Number of toucans plus number of pelicans"}]
                     (map (partial lib/display-info query')
                          (lib/aggregations query'))))))))))
 
@@ -142,7 +151,7 @@
   (let [query    (-> (lib/query metadata-provider (meta/table-metadata :venues))
                      (lib/aggregate [:metric {:lib/uuid (str (random-uuid))} 100]))]
     (is (= :type/Integer
-           (lib.metadata.calculation/type-of query [:metric {:lib/uuid (str (random-uuid))} 100])))))
+           (lib/type-of query [:metric {:lib/uuid (str (random-uuid))} 100])))))
 
 (deftest ^:parallel ga-metric-metadata-test
   (testing "Make sure we can calculate metadata for FAKE Google Analytics metric clauses"
@@ -156,4 +165,4 @@
                 :lib/source               :source/aggregations
                 :lib/source-column-alias  "metric"
                 :lib/type                 :metadata/column}]
-              (lib.metadata.calculation/returned-columns query -1 query))))))
+              (lib/returned-columns query -1 query))))))

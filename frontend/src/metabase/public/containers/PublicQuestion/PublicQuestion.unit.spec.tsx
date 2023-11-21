@@ -4,14 +4,17 @@ import { renderWithProviders, screen, within } from "__support__/ui";
 import {
   setupPublicCardQueryEndpoints,
   setupPublicQuestionEndpoints,
-} from "__support__/server-mocks/public";
+} from "__support__/server-mocks";
+import registerVisualizations from "metabase/visualizations/register";
 import { createMockState } from "metabase-types/store/mocks";
 import {
   createMockPublicCard,
-  createMockPublicDataset,
+  createMockEmbedDataset,
 } from "metabase-types/api/mocks";
 
 import { PublicQuestion } from "./PublicQuestion";
+
+registerVisualizations();
 
 const FAKE_UUID = "123456";
 
@@ -24,7 +27,7 @@ async function setup() {
   );
   setupPublicCardQueryEndpoints(
     FAKE_UUID,
-    createMockPublicDataset({
+    createMockEmbedDataset({
       data: { rows: [["John W."]] },
     }),
   );

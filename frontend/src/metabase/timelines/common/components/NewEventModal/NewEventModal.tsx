@@ -1,8 +1,9 @@
 import { useCallback, useMemo } from "react";
 import { t } from "ttag";
+// eslint-disable-next-line no-restricted-imports -- deprecated usage
 import moment from "moment-timezone";
 import { getDefaultTimelineIcon } from "metabase/lib/timelines";
-import {
+import type {
   Collection,
   Timeline,
   TimelineEventData,

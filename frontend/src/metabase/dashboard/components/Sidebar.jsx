@@ -9,14 +9,21 @@ const propTypes = {
   children: PropTypes.node,
   onClose: PropTypes.func,
   onCancel: PropTypes.func,
+  "data-testid": PropTypes.string,
 };
 
-function Sidebar({ closeIsDisabled, children, onClose, onCancel }) {
+function Sidebar({
+  closeIsDisabled,
+  children,
+  onClose,
+  onCancel,
+  "data-testid": dataTestId,
+}) {
   return (
     <aside
+      data-testid={dataTestId}
       style={{ width: WIDTH, minWidth: WIDTH }}
       className="flex flex-column border-left bg-white"
-      aria-label="subscriptions sidebar"
     >
       <div className="flex flex-column flex-auto overflow-y-auto">
         {children}

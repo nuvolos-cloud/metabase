@@ -13,21 +13,23 @@ import NativeQuery, {
 } from "metabase-lib/queries/NativeQuery";
 import AtomicQuery from "metabase-lib/queries/AtomicQuery";
 import InternalQuery from "metabase-lib/queries/InternalQuery";
-import BaseQuery from "metabase-lib/queries/Query";
+import type BaseQuery from "metabase-lib/queries/Query";
 import Metadata from "metabase-lib/metadata/Metadata";
-import Database from "metabase-lib/metadata/Database";
-import Table from "metabase-lib/metadata/Table";
-import Field from "metabase-lib/metadata/Field";
+import type Database from "metabase-lib/metadata/Database";
+import type Table from "metabase-lib/metadata/Table";
+import type Field from "metabase-lib/metadata/Field";
 import { AggregationDimension, FieldDimension } from "metabase-lib/Dimension";
 import { isFK } from "metabase-lib/types/utils/isa";
-import { memoizeClass, sortObject } from "metabase-lib/utils";
+import { sortObject } from "metabase-lib/utils";
 
 import type {
   Card as CardObject,
+  Collection,
   CollectionId,
   DatabaseId,
   DatasetColumn,
   DatasetQuery,
+  DatasetData,
   DependentMetadataItem,
   TableId,
   RowValue,
@@ -60,7 +62,6 @@ import { isTransientId } from "metabase-lib/queries/utils/card";
 import {
   findColumnIndexForColumnSetting,
   findColumnSettingIndexForColumn,
-  syncTableColumnsToQuery,
 } from "metabase-lib/queries/utils/dataset";
 import {
   ALERT_TYPE_PROGRESS_BAR_GOAL,
@@ -94,7 +95,7 @@ export type QuestionCreatorOpts = {
  * This is a wrapper around a question/card object, which may contain one or more Query objects
  */
 
-class QuestionInner {
+class Question {
   /**
    * The plain object presentation of this question, equal to the format that Metabase REST API understands.
    * It is called `card` for both historical reasons and to make a clear distinction to this class.
@@ -117,7 +118,7 @@ class QuestionInner {
    * Question constructor
    */
   constructor(
-    card: CardObject,
+    card: any,
     metadata?: Metadata,
     parameterValues?: ParameterValues,
   ) {
@@ -189,7 +190,7 @@ class QuestionInner {
    *
    * This is just a wrapper object, the data is stored in `this._card.dataset_query` in a format specific to the query type.
    */
-  query(): AtomicQuery {
+  query = _.once((): AtomicQuery => {
     const datasetQuery = this._card.dataset_query;
 
     for (const QueryClass of [StructuredQuery, NativeQuery, InternalQuery]) {
@@ -202,7 +203,7 @@ class QuestionInner {
     // `dataset_query` is null for questions on a dashboard the user don't have access to
     !isVirtualDashcard &&
       console.warn("Unknown query type: " + datasetQuery?.type);
-  }
+  });
 
   isNative(): boolean {
     return this.query() instanceof NativeQuery;
@@ -313,7 +314,11 @@ class QuestionInner {
     return this._card && this._card.displayIsLocked;
   }
 
-  maybeResetDisplay(sensibleDisplays, previousSensibleDisplays): Question {
+  maybeResetDisplay(
+    data: DatasetData,
+    sensibleDisplays: string[],
+    previousSensibleDisplays: string[] | undefined,
+  ): Question {
     const wasSensible =
       previousSensibleDisplays == null ||
       previousSensibleDisplays.includes(this.display());
@@ -321,35 +326,27 @@ class QuestionInner {
     const shouldUnlock = wasSensible && !isSensible;
     const defaultDisplay = this.setDefaultDisplay().display();
 
+    let question;
     if (isSensible && defaultDisplay === "table") {
       // any sensible display is better than the default table display
-      return this;
+      question = this;
+    } else if (shouldUnlock && this.displayIsLocked()) {
+      question = this.setDisplayIsLocked(false).setDefaultDisplay();
+    } else {
+      question = this.setDefaultDisplay();
     }
 
-    if (shouldUnlock && this.displayIsLocked()) {
-      return this.setDisplayIsLocked(false).setDefaultDisplay();
-    }
-
-    return this.setDefaultDisplay();
+    return question._maybeSwitchToScalar(data);
   }
 
-  // Switches display based on data shape. For 1x1 data, we show a scalar. If
-  // our display was a 1x1 type, but the data isn't 1x1, we show a table.
-  switchTableScalar({ rows = [], cols }): Question {
-    if (this.displayIsLocked()) {
-      return this;
-    }
-
-    const display = this.display();
-    const isScalar = ["scalar", "progress", "gauge"].includes(display);
+  // Switches display to scalar if the data is 1 row x 1 column
+  private _maybeSwitchToScalar({ rows, cols }): Question {
+    const isScalar = ["scalar", "progress", "gauge"].includes(this.display());
     const isOneByOne = rows.length === 1 && cols.length === 1;
-    const newDisplay =
-      !isScalar && isOneByOne // if we have a 1x1 data result then this should always be viewed as a scalar
-        ? "scalar"
-        : isScalar && !isOneByOne // any time we were a scalar and now have more than 1x1 data switch to table view
-        ? "table" // otherwise leave the display unchanged
-        : display;
-    return this.setDisplay(newDisplay);
+    if (!isScalar && isOneByOne && !this.displayIsLocked()) {
+      return this.setDisplay("scalar");
+    }
+    return this;
   }
 
   setDefaultDisplay(): Question {
@@ -733,7 +730,7 @@ class QuestionInner {
         this.setting("table.columns"),
       )
     ) {
-      return syncTableColumnsToQuery(this);
+      return this;
     }
 
     const addedColumnNames = _.difference(
@@ -779,13 +776,14 @@ class QuestionInner {
     const tableColumns = this.setting("table.columns");
     if (
       tableColumns &&
-      addedColumnNames.length > 0 &&
-      removedColumnNames.length === 0
+      (addedColumnNames.length > 0 || removedColumnNames.length > 0)
     ) {
       return this.updateSettings({
         "table.columns": [
           ...tableColumns.filter(
-            column => !addedColumnNames.includes(column.name),
+            column =>
+              !removedColumnNames.includes(column.name) &&
+              !addedColumnNames.includes(column.name),
           ),
           ...addedColumnNames.map(name => {
             const dimension = query.columnDimensionWithName(name);
@@ -914,6 +912,10 @@ class QuestionInner {
 
   collectionId(): number | null | undefined {
     return this._card && this._card.collection_id;
+  }
+
+  collectionType(): Pick<Collection, "type"> {
+    return this._card?.collection?.type;
   }
 
   setCollectionId(collectionId: number | null | undefined) {
@@ -1225,7 +1227,17 @@ class QuestionInner {
       );
     }
 
+    // Helpers for working with the current query from CLJS REPLs.
+    if (process.env.NODE_ENV === "development") {
+      window.__MLv2_metadata = metadata;
+      window.__MLv2_query = this.__mlv2Query;
+    }
+
     return this.__mlv2Query;
+  }
+
+  _setMLv2Query(query: Query): Question {
+    return this.setDatasetQuery(ML.toLegacyQuery(query));
   }
 
   generateQueryDescription() {
@@ -1236,12 +1248,7 @@ class QuestionInner {
   getModerationReviews() {
     return getIn(this, ["_card", "moderation_reviews"]) || [];
   }
-}
 
-// eslint-disable-next-line import/no-default-export -- deprecated usage
-export default class Question extends memoizeClass<QuestionInner>("query")(
-  QuestionInner,
-) {
   /**
    * TODO Atte Keinänen 6/13/17: Discussed with Tom that we could use the default Question constructor instead,
    * but it would require changing the constructor signature so that `card` is an optional parameter and has a default value
@@ -1285,3 +1292,6 @@ export default class Question extends memoizeClass<QuestionInner>("query")(
     return new Question(card, metadata, parameterValues);
   }
 }
+
+// eslint-disable-next-line import/no-default-export -- deprecated usage
+export default Question;

@@ -1,10 +1,10 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import cx from "classnames";
 import { t } from "ttag";
 import { connect } from "react-redux";
 import type { LocationDescriptor } from "history";
 
-import { IconName, IconProps } from "metabase/core/components/Icon";
+import type { IconName, IconProps } from "metabase/core/components/Icon";
 
 import Visualization from "metabase/visualizations/components/Visualization";
 import WithVizSettingsData from "metabase/dashboard/hoc/WithVizSettingsData";
@@ -17,7 +17,7 @@ import {
 
 import type {
   Dashboard,
-  DashboardOrderedCard,
+  DashboardCard,
   DashCardId,
   Dataset,
   Series,
@@ -28,12 +28,14 @@ import type {
 } from "metabase-types/api";
 import type { Dispatch } from "metabase-types/store";
 
+import type { Mode } from "metabase/visualizations/click-actions/Mode";
 import Question from "metabase-lib/Question";
-import type Mode from "metabase-lib/Mode";
 import type Metadata from "metabase-lib/metadata/Metadata";
 
-import InternalQuery from "metabase-lib/queries/InternalQuery";
-import { CardSlownessStatus, DashCardOnChangeCardAndRunHandler } from "./types";
+import type {
+  CardSlownessStatus,
+  DashCardOnChangeCardAndRunHandler,
+} from "./types";
 import ClickBehaviorSidebarOverlay from "./ClickBehaviorSidebarOverlay";
 import DashCardMenu from "./DashCardMenu";
 import DashCardParameterMapper from "./DashCardParameterMapper";
@@ -45,7 +47,7 @@ import { shouldShowParameterMapper } from "./utils";
 
 interface DashCardVisualizationProps {
   dashboard: Dashboard;
-  dashcard: DashboardOrderedCard;
+  dashcard: DashboardCard;
   series: Series;
   parameterValues: Record<ParameterId, ParameterValueOrArray>;
   parameterValuesBySlug: Record<string, ParameterValueOrArray>;
@@ -61,7 +63,6 @@ interface DashCardVisualizationProps {
 
   expectedDuration: number;
   isSlow: CardSlownessStatus;
-  isAction: boolean;
 
   isPreviewing: boolean;
   isEmbed: boolean;
@@ -74,6 +75,7 @@ interface DashCardVisualizationProps {
   isMobile?: boolean;
   isNightMode?: boolean;
   isPublic?: boolean;
+  isXray?: boolean;
 
   error?: { message?: string; icon?: IconName };
   headerIcon?: IconProps;
@@ -107,12 +109,12 @@ function DashCardVisualization({
   totalNumGridCols,
   expectedDuration,
   error,
-  isAction,
   headerIcon,
   isSlow,
   isPreviewing,
   isEmbed,
   isPublic,
+  isXray,
   isEditingDashboardLayout,
   isClickBehaviorSidebarOpen,
   isEditingDashCardClickBehavior,
@@ -126,10 +128,14 @@ function DashCardVisualization({
   onChangeLocation,
   onUpdateVisualizationSettings,
 }: DashCardVisualizationProps) {
+  const question = useMemo(() => {
+    return new Question(dashcard.card, metadata);
+  }, [dashcard.card, metadata]);
+
   const renderVisualizationOverlay = useCallback(() => {
     if (isClickBehaviorSidebarOpen) {
-      const { disableClickBehavior } =
-        getVisualizationRaw(series).visualization;
+      const disableClickBehavior =
+        getVisualizationRaw(series)?.disableClickBehavior;
       if (isVirtualDashCard(dashcard) || disableClickBehavior) {
         const virtualDashcardType = getVirtualCardType(
           dashcard,
@@ -180,17 +186,18 @@ function DashCardVisualization({
   ]);
 
   const renderActionButtons = useCallback(() => {
-    const question = new Question(dashcard.card, metadata);
     const mainSeries = series[0] as unknown as Dataset;
 
-    const isInternalQuery = question.query() instanceof InternalQuery;
-    const shouldShowDownloadWidget =
-      isEmbed ||
-      (!isPublic &&
-        !isEditing &&
-        DashCardMenu.shouldRender({ question, result: mainSeries }));
+    const shouldShowDashCardMenu = DashCardMenu.shouldRender({
+      question,
+      result: mainSeries,
+      isXray,
+      isEmbed,
+      isPublic,
+      isEditing,
+    });
 
-    if (isInternalQuery || !shouldShowDownloadWidget) {
+    if (!shouldShowDashCardMenu) {
       return null;
     }
 
@@ -205,14 +212,16 @@ function DashCardVisualization({
       />
     );
   }, [
+    question,
+    dashcard.id,
+    dashcard.dashboard_id,
     series,
-    metadata,
     isEmbed,
     isPublic,
     isEditing,
-    dashcard,
+    isXray,
+    dashboard.id,
     parameterValuesBySlug,
-    dashboard,
   ]);
 
   return (
@@ -241,7 +250,6 @@ function DashCardVisualization({
       errorIcon={error?.icon}
       showTitle
       isDashboard
-      isAction={isAction}
       isSlow={isSlow}
       isFullscreen={isFullscreen}
       isNightMode={isNightMode}

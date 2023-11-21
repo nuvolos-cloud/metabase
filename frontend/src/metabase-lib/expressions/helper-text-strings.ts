@@ -1,6 +1,7 @@
 import { t } from "ttag";
+// eslint-disable-next-line no-restricted-imports -- deprecated usage
 import moment from "moment-timezone";
-import { HelpText, HelpTextConfig } from "metabase-lib/expressions/types";
+import type { HelpText, HelpTextConfig } from "metabase-lib/expressions/types";
 import type Database from "metabase-lib/metadata/Database";
 import {
   formatIdentifier,

@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import type { Location } from "history";
 
 import { renderWithProviders, screen } from "__support__/ui";
-import { DashboardState, State } from "metabase-types/store";
-import { DashboardOrderedTab } from "metabase-types/api";
+import type { DashboardState, State } from "metabase-types/store";
+import type { DashboardTab } from "metabase-types/api";
 import { getDefaultTab, resetTempTabId } from "metabase/dashboard/actions";
 import { INPUT_WRAPPER_TEST_ID } from "metabase/core/components/TabButton";
 
@@ -20,7 +20,7 @@ function setup({
   slug = undefined,
   isEditing = true,
 }: {
-  tabs?: DashboardOrderedTab[];
+  tabs?: DashboardTab[];
   slug?: string | undefined;
   isEditing?: boolean;
 } = {}) {
@@ -29,7 +29,7 @@ function setup({
     dashboards: {
       1: {
         ...TEST_DASHBOARD_STATE.dashboards[1],
-        ordered_tabs: tabs ?? TEST_DASHBOARD_STATE.dashboards[1].ordered_tabs,
+        tabs: tabs ?? TEST_DASHBOARD_STATE.dashboards[1].tabs,
       },
     },
   };

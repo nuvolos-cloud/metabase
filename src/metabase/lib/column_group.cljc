@@ -2,6 +2,7 @@
   (:require
    [metabase.lib.card :as lib.card]
    [metabase.lib.join :as lib.join]
+   [metabase.lib.join.util :as lib.join.util]
    [metabase.lib.metadata :as lib.metadata]
    [metabase.lib.metadata.calculation :as lib.metadata.calculation]
    [metabase.lib.schema.common :as lib.schema.common]
@@ -114,7 +115,9 @@
 
 (defmethod column-group-info-method :source/implicitly-joinable
   [column-metadata]
-  {::group-type :group-type/join.implicit, :fk-field-id (:fk-field-id column-metadata)})
+  {::group-type :group-type/join.implicit,
+   :fk-field-id (:fk-field-id column-metadata)
+   :fk-join-alias (:fk-join-alias column-metadata)})
 
 (defmethod column-group-info-method :source/joins
   [{:keys [table-id], :lib/keys [card-id], :as column-metadata}]
@@ -125,7 +128,7 @@
    ;; joinable -- either the Card we're joining, or the Table we're joining. Prefer `:lib/card-id` because when we
    ;; join a Card the Fields might have `:table-id` but we want the entire Card to appear as one group. See #32493
    (or
-    (when-let [join-alias (lib.join/current-join-alias column-metadata)]
+    (when-let [join-alias (lib.join.util/current-join-alias column-metadata)]
       {:join-alias join-alias})
     (when card-id
       {:card-id card-id})

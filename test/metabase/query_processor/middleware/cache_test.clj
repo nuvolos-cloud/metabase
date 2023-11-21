@@ -5,7 +5,7 @@
    [clojure.core.async :as a]
    [clojure.data.csv :as csv]
    [clojure.test :refer :all]
-   [java-time :as t]
+   [java-time.api :as t]
    [medley.core :as m]
    [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
    [metabase.models.permissions :as perms]
@@ -17,7 +17,6 @@
    [metabase.query-processor.middleware.cache :as cache]
    [metabase.query-processor.middleware.cache-backend.interface :as i]
    [metabase.query-processor.middleware.cache.impl :as impl]
-   [metabase.query-processor.middleware.cache.impl-test :as impl-test]
    [metabase.query-processor.middleware.process-userland-query
     :as process-userland-query]
    [metabase.query-processor.reducible :as qp.reducible]
@@ -30,16 +29,11 @@
    [metabase.util :as u]
    [metabase.util.log :as log]
    [pretty.core :as pretty]
-   [schema.core :as s]
    [toucan2.core :as t2]))
 
 (set! *warn-on-reflection* true)
 
 (use-fixtures :once (fixtures/initialize :db))
-
-(use-fixtures :each (fn [thunk]
-                      (mt/with-log-level :fatal
-                        (thunk))))
 
 (def ^:private ^:dynamic *save-chan*
   "Gets a message whenever results are saved to the test backend, or if the reducing function stops serializing results
@@ -49,9 +43,6 @@
 (def ^:private ^:dynamic *purge-chan*
   "Gets a message whenever old entries are purged from the test backend."
   nil)
-
-(defprotocol ^:private CacheContents
-  (^:private contents [cache-backend]))
 
 (defn- test-backend
   "In in-memory cache backend implementation."
@@ -64,11 +55,6 @@
              (u/pprint-to-str 'blue
                (for [[hash {:keys [created]}] @store]
                  [hash (u/format-nanoseconds (.getNano (t/duration created (t/instant))))]))))
-
-      CacheContents
-      (contents [_]
-        (into {} (for [[k v] store]
-                   [k (impl-test/deserialize v)])))
 
       i/CacheBackend
       (cached-results [this query-hash max-age-seconds respond]
@@ -392,7 +378,8 @@
       (let [query (assoc (mt/mbql-query venues {:order-by [[:asc $id]], :limit 6})
                          :cache-ttl 100)]
         (with-open [os (java.io.ByteArrayOutputStream.)]
-          (qp/process-query query (qp.streaming/streaming-context :csv os))
+          (let [{:keys [context rff]} (qp.streaming/streaming-context-and-rff :csv os)]
+            (qp/process-query query rff context))
           (mt/wait-for-result save-chan))
         (is (= true
                (:cached (qp/process-query query)))
@@ -400,14 +387,16 @@
         (let [uncached-results (with-open [ostream (java.io.PipedOutputStream.)
                                            istream (java.io.PipedInputStream. ostream)
                                            reader  (java.io.InputStreamReader. istream)]
-                                 (qp/process-query (dissoc query :cache-ttl) (qp.streaming/streaming-context :csv ostream))
+                                 (let [{:keys [context rff]} (qp.streaming/streaming-context-and-rff :csv ostream)]
+                                   (qp/process-query (dissoc query :cache-ttl) rff context))
                                  (vec (csv/read-csv reader)))]
           (with-redefs [sql-jdbc.execute/execute-reducible-query (fn [& _]
                                                                    (throw (Exception. "Should be cached!")))]
             (with-open [ostream (java.io.PipedOutputStream.)
                         istream (java.io.PipedInputStream. ostream)
                         reader  (java.io.InputStreamReader. istream)]
-              (qp/process-query query (qp.streaming/streaming-context :csv ostream))
+              (let [{:keys [context rff]} (qp.streaming/streaming-context-and-rff :csv ostream)]
+                (qp/process-query query rff context))
               (is (= uncached-results
                      (vec (csv/read-csv reader)))
                   "CSV results should match results when caching isn't in play"))))))))
@@ -422,9 +411,10 @@
       (with-mock-cache [save-chan]
         (let [query (assoc query :cache-ttl 100)]
           (with-open [os (java.io.ByteArrayOutputStream.)]
-            (is (= false
-                   (boolean (:cached (qp/process-query query (qp.streaming/streaming-context :csv os)))))
-                "Query shouldn't be cached after first run with the mock cache in place")
+            (let [{:keys [rff context]} (qp.streaming/streaming-context-and-rff :csv os)]
+              (is (= false
+                     (boolean (:cached (qp/process-query query rff context))))
+                  "Query shouldn't be cached after first run with the mock cache in place"))
             (mt/wait-for-result save-chan))
           (is (= (-> (assoc normal-results :cached true)
                      (dissoc :updated_at)
@@ -473,8 +463,8 @@
                        chan))))
             (testing "Run forbidden query again as superuser again, should be cached"
               (mw.session/with-current-user (mt/user->id :crowberto)
-                (is (schema= {:cached (s/eq true), s/Keyword s/Any}
-                             (run-forbidden-query)))))
+                (is (=? {:cached true}
+                        (run-forbidden-query)))))
             (testing "Run query as regular user, should get perms Exception even though result is cached"
               (is (thrown-with-msg?
                    clojure.lang.ExceptionInfo

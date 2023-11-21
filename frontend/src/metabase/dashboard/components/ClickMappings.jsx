@@ -14,8 +14,12 @@ import { GTAPApi } from "metabase/services";
 
 import { loadMetadataForQuery } from "metabase/redux/metadata";
 import { getParameters } from "metabase/dashboard/selectors";
-import { getTargetsWithSourceFilters } from "metabase-lib/parameters/utils/click-behavior";
+import {
+  getTargetsForDashboard,
+  getTargetsForQuestion,
+} from "metabase-lib/parameters/utils/click-behavior";
 import Question from "metabase-lib/Question";
+import { TargetTrigger } from "./ClickMappings.styled";
 
 class ClickMappingsInner extends Component {
   render() {
@@ -114,11 +118,11 @@ class ClickMappingsInner extends Component {
 
 const ClickMappings = _.compose(
   loadQuestionMetadata((state, props) =>
-    props.isDash || props.isAction ? null : props.object,
+    props.isDashboard ? null : props.object,
   ),
   withUserAttributes,
   connect((state, props) => {
-    const { object, isDash, dashcard, clickBehavior } = props;
+    const { object, isDashboard, dashcard, clickBehavior } = props;
     let parameters = getParameters(state, props);
 
     if (props.excludeParametersSources) {
@@ -135,12 +139,9 @@ const ClickMappings = _.compose(
     }
 
     const [setTargets, unsetTargets] = _.partition(
-      getTargetsWithSourceFilters({
-        isAction: props.isAction,
-        isDash,
-        dashcard,
-        object,
-      }),
+      isDashboard
+        ? getTargetsForDashboard(object, dashcard)
+        : getTargetsForQuestion(object),
       ({ id }) =>
         getIn(clickBehavior, ["parameterMapping", id, "source"]) != null,
     );
@@ -169,11 +170,7 @@ function TargetWithoutSource({
   return (
     <Select
       key={id}
-      triggerElement={
-        <div className="flex p1 rounded align-center full mb1 text-bold bg-light-hover text-brand-hover">
-          {name}
-        </div>
-      }
+      triggerElement={<TargetTrigger>{name}</TargetTrigger>}
       value={null}
       sections={Object.entries(sourceOptions).map(([sourceType, items]) => ({
         name: {

@@ -11,6 +11,8 @@ import "number-to-locale-string";
 // Should be imported before any other metabase import
 import "ee-overrides"; // eslint-disable-line import/no-duplicates
 
+import "metabase/lib/dayjs";
+
 // If enabled this monkeypatches `t` and `jt` to return blacked out
 // strings/elements to assist in finding untranslated strings.
 import "metabase/lib/i18n-debug";
@@ -49,6 +51,7 @@ import registerVisualizations from "metabase/visualizations/register";
 import { PLUGIN_APP_INIT_FUCTIONS } from "metabase/plugins";
 
 import GlobalStyles from "metabase/styled-components/containers/GlobalStyles";
+import { EmotionCacheProvider } from "metabase/styled-components/components/EmotionCacheProvider";
 import { getStore } from "./store";
 
 // remove trailing slash
@@ -72,12 +75,14 @@ function _init(reducers, getRoutes, callback) {
 
   ReactDOM.render(
     <Provider store={store} ref={ref => (root = ref)}>
-      <DragDropContextProvider backend={HTML5Backend} context={{ window }}>
-        <ThemeProvider>
-          <GlobalStyles />
-          <Router history={history}>{routes}</Router>
-        </ThemeProvider>
-      </DragDropContextProvider>
+      <EmotionCacheProvider>
+        <DragDropContextProvider backend={HTML5Backend} context={{ window }}>
+          <ThemeProvider>
+            <GlobalStyles />
+            <Router history={history}>{routes}</Router>
+          </ThemeProvider>
+        </DragDropContextProvider>
+      </EmotionCacheProvider>
     </Provider>,
     document.getElementById("root"),
   );

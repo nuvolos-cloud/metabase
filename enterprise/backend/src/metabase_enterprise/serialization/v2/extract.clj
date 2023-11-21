@@ -1,7 +1,7 @@
 (ns metabase-enterprise.serialization.v2.extract
   "Extraction is the first step in serializing a Metabase appdb so it can be eg. written to disk.
 
-  See the detailed descriptions of the (de)serialization processes in [[metabase.models.serialization.base]]."
+  See the detailed descriptions of the (de)serialization processes in [[metabase.models.serialization]]."
   (:require
    [clojure.set :as set]
    [clojure.string :as str]
@@ -11,7 +11,6 @@
    [metabase.models.collection :as collection]
    [metabase.models.serialization :as serdes]
    [metabase.util.log :as log]
-   [toucan.db :as db]
    [toucan2.core :as t2]))
 
 (set! *warn-on-reflection* true)
@@ -86,8 +85,8 @@
         collection-set (into collection-ids (mapcat collection/descendant-ids) (t2/select Collection :id [:in collection-ids]))
         dashboards     (t2/select Dashboard :collection_id [:in collection-set])
         ;; All cards that are in this collection set.
-        cards          (reduce set/union (for [coll-id collection-set]
-                                           (t2/select-pks-set Card :collection_id coll-id)))
+        cards          (reduce set/union #{} (for [coll-id collection-set]
+                                               (t2/select-pks-set Card :collection_id coll-id)))
 
         ;; Map of {dashboard-id #{DashboardCard}} for dashcards whose cards OR parameter-bound cards are outside the
         ;; transitive collection set.
@@ -135,29 +134,23 @@
       (format "%d: %s" coll-id names))
     "[no collection]"))
 
+(defn- card-label [card-id]
+  (let [card (t2/select-one [Card :collection_id :name] :id card-id)]
+    (format "Card %d (%s from collection %s)" card-id (:name card) (collection-label (:collection_id card)))))
+
 (defn- escape-report
   "Given the analysis map from [[escape-analysis]], report the results in a human-readable format with Card titles etc."
   [{:keys [escaped-dashcards escaped-questions]}]
   (when-not (empty? escaped-dashcards)
-    (log/info "Dashboard cards outside the collection")
-    (log/info "======================================")
     (doseq [[dash-id card-ids] escaped-dashcards
             :let [dash-name (t2/select-one-fn :name Dashboard :id dash-id)]]
-      (log/infof "Dashboard %d: %s\n" dash-id dash-name)
-      (doseq [card_id card-ids
-              :let [card (t2/select-one [Card :collection_id :name] :id card_id)]]
-        (log/infof "          \tCard %d: %s\n"    card_id (:name card))
-        (log/infof "        from collection %s\n" (collection-label (:collection_id card))))))
+      (log/warnf "Failed to export Dashboard %d (%s) containing Cards saved outside requested collections: %s"
+                 dash-id dash-name (str/join ", " (map card-label card-ids)))))
 
   (when-not (empty? escaped-questions)
-    (log/info "Questions based on outside questions")
-    (log/info "====================================")
-    (doseq [[curated-id alien-id] escaped-questions
-            :let [curated-card (t2/select-one [Card :collection_id :name] :id curated-id)
-                  alien-card   (t2/select-one [Card :collection_id :name] :id alien-id)]]
-      (log/infof "%-4d      %s    (%s)\n  -> %-4d %s    (%s)\n"
-                 curated-id (:name curated-card) (collection-label (:collection_id curated-card))
-                 alien-id   (:name alien-card)   (collection-label (:collection_id alien-card))))))
+    (log/warnf "Failed to export Cards based on questions outside requested collections: %s"
+               (str/join ", " (for [[curated-id alien-id] escaped-questions]
+                                (str (card-label curated-id) " -> " (card-label alien-id)))))))
 
 (defn- extract-subtrees
   "Extracts the targeted entities and all their descendants into a reducible stream of extracted maps.
@@ -184,7 +177,7 @@ Eg. if Dashboard B includes a Card A that is derived from a
                           (update-vals #(set (map second %))))
           extract-ids (fn [[model ids]]
                         (eduction (map #(serdes/extract-one model opts %))
-                                  (db/select-reducible (symbol model) :id [:in ids])))]
+                                  (t2/reducible-select (symbol model) :id [:in ids])))]
       (eduction cat
                 [(eduction (map extract-ids) cat by-model)
                  ;; extract all non-content entities like data model and settings if necessary
@@ -193,7 +186,7 @@ Eg. if Dashboard B includes a Card A that is derived from a
 (defn extract
   "Returns a reducible stream of entities to serialize"
   [{:keys [targets] :as opts}]
-  (serdes.backfill/backfill-ids)
+  (serdes.backfill/backfill-ids!)
   (if (seq targets)
     (extract-subtrees opts)
     (extract-metabase opts)))

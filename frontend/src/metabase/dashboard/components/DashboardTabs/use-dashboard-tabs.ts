@@ -13,7 +13,7 @@ import {
   undoDeleteTab,
   moveTab as moveTabAction,
 } from "metabase/dashboard/actions";
-import { SelectedTabId } from "metabase-types/store";
+import type { SelectedTabId } from "metabase-types/store";
 import { getSelectedTabId, getTabs } from "metabase/dashboard/selectors";
 import { addUndo } from "metabase/redux/undo";
 
@@ -51,7 +51,8 @@ export function useDashboardTabs({ location }: { location: Location }) {
       moveTabAction({
         sourceTabId:
           typeof activeId === "number" ? activeId : parseInt(activeId),
-        destTabId: typeof overId === "number" ? overId : parseInt(overId),
+        destinationTabId:
+          typeof overId === "number" ? overId : parseInt(overId),
       }),
     );
 

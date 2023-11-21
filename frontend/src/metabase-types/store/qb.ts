@@ -1,4 +1,4 @@
-import {
+import type {
   Card,
   DashboardId,
   Dataset,
@@ -16,6 +16,7 @@ export type ForeignKeyReference = {
 };
 
 export interface QueryBuilderUIControls {
+  isModifiedFromNotebook: boolean;
   isShowingDataReference: boolean;
   isShowingTemplateTagsEditor: boolean;
   isShowingNewbModal: boolean;

@@ -2,6 +2,7 @@ import { assoc, dissoc, assocIn, updateIn, chain, merge } from "icepick";
 import reduceReducers from "reduce-reducers";
 import _ from "underscore";
 
+import produce from "immer";
 import { handleActions, combineReducers } from "metabase/lib/redux";
 import Dashboards from "metabase/entities/dashboards";
 import Questions from "metabase/entities/questions";
@@ -43,9 +44,12 @@ import {
   UNDO_REMOVE_CARD_FROM_DASH,
   SHOW_AUTO_APPLY_FILTERS_TOAST,
   tabsReducer,
-  SET_LOADING_DASHCARDS_COMPLETE,
+  FETCH_CARD_DATA_PENDING,
 } from "./actions";
-import { syncParametersAndEmbeddingParams } from "./utils";
+import {
+  calculateDashCardRowAfterUndo,
+  syncParametersAndEmbeddingParams,
+} from "./utils";
 import { INITIAL_DASHBOARD_STATE } from "./constants";
 
 const dashboardId = handleActions(
@@ -114,10 +118,7 @@ const dashboards = handleActions(
       ...state,
       [dashcard.dashboard_id]: {
         ...state[dashcard.dashboard_id],
-        ordered_cards: [
-          ...state[dashcard.dashboard_id].ordered_cards,
-          dashcard.id,
-        ],
+        dashcards: [...state[dashcard.dashboard_id].dashcards, dashcard.id],
       },
     }),
     [CREATE_PUBLIC_LINK]: {
@@ -145,12 +146,15 @@ const dashboards = handleActions(
         ),
     },
     [Dashboards.actionTypes.UPDATE]: {
-      next: (state, { payload }) =>
-        assocIn(
-          state,
-          [payload.dashboard.id, "collection_id"],
-          payload.dashboard.collection_id,
-        ),
+      next: (state, { payload }) => {
+        return produce(state, draftState => {
+          const draftDashboard = draftState[payload.dashboard.id];
+          if (draftDashboard) {
+            draftDashboard.collection_id = payload.dashboard.collection_id;
+            draftDashboard.collection = payload.dashboard.collection;
+          }
+        });
+      },
     },
   },
   INITIAL_DASHBOARD_STATE.dashboards,
@@ -226,7 +230,11 @@ const dashcards = handleActions(
     }),
     [UNDO_REMOVE_CARD_FROM_DASH]: (state, { payload: { dashcardId } }) => ({
       ...state,
-      [dashcardId]: { ...state[dashcardId], isRemoved: false },
+      [dashcardId]: {
+        ...state[dashcardId],
+        isRemoved: false,
+        row: calculateDashCardRowAfterUndo(state[dashcardId].row),
+      },
     }),
     [MARK_NEW_CARD_SEEN]: (state, { payload: dashcardId }) => ({
       ...state,
@@ -274,6 +282,7 @@ const isNavigatingBackToDashboard = handleActions(
   INITIAL_DASHBOARD_STATE.isNavigatingBackToDashboard,
 );
 
+// Many of these slices are also updated by `tabsReducer` in `frontend/src/metabase/dashboard/actions/tabs.ts`
 const dashcardData = handleActions(
   {
     // clear existing dashboard data when loading a dashboard
@@ -338,7 +347,11 @@ const parameterValues = handleActions(
 
 const draftParameterValues = handleActions(
   {
-    [INITIALIZE]: { next: () => ({}) },
+    [INITIALIZE]: {
+      next: (state, { payload: { clearCache = true } = {} }) => {
+        return clearCache ? {} : state;
+      },
+    },
     [FETCH_DASHBOARD]: {
       next: (
         state,
@@ -358,7 +371,6 @@ const draftParameterValues = handleActions(
     [REMOVE_PARAMETER]: {
       next: (state, { payload: { id } }) => dissoc(state, id),
     },
-    [RESET]: { next: () => ({}) },
   },
   {},
 );
@@ -372,15 +384,23 @@ const loadingDashCards = handleActions(
       }),
     },
     [FETCH_DASHBOARD_CARD_DATA]: {
-      next: (state, { payload: { currentTime, dashcardIds } }) => {
-        const loadingIds = Array.isArray(dashcardIds) ? dashcardIds : [];
-
+      next: (state, { payload: { currentTime, loadingIds } }) => {
         return {
           ...state,
-          dashcardIds: loadingIds,
           loadingIds,
           loadingStatus: loadingIds.length > 0 ? "running" : "idle",
           startTime: loadingIds.length > 0 ? currentTime : null,
+        };
+      },
+    },
+    [FETCH_CARD_DATA_PENDING]: {
+      next: (state, { payload: { dashcard_id } }) => {
+        const loadingIds = !state.loadingIds.includes(dashcard_id)
+          ? state.loadingIds.concat(dashcard_id)
+          : state.loadingIds;
+        return {
+          ...state,
+          loadingIds,
         };
       },
     },
@@ -403,15 +423,6 @@ const loadingDashCards = handleActions(
           ...state,
           loadingIds,
           ...(loadingIds.length === 0 ? { startTime: null } : {}),
-        };
-      },
-    },
-    [SET_LOADING_DASHCARDS_COMPLETE]: {
-      next: state => {
-        return {
-          ...state,
-          loadingIds: [],
-          loadingStatus: "complete",
         };
       },
     },

@@ -1,8 +1,9 @@
 import { t } from "ttag";
+// eslint-disable-next-line no-restricted-imports -- deprecated usage
 import moment from "moment-timezone";
 import * as Urls from "metabase/lib/urls";
 import Link from "metabase/core/components/Link";
-import { Collection, Timeline } from "metabase-types/api";
+import type { Collection, Timeline } from "metabase-types/api";
 import {
   EmptyStateBody,
   EmptyStateChart,

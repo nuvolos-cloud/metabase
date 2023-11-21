@@ -9,8 +9,8 @@ import {
   isAdminGroup,
   getGroupNameLocalized,
 } from "metabase/lib/groups";
-import { Group, Member } from "metabase-types/api";
-import { isNotNull } from "metabase/core/utils/types";
+import type { Group, Member } from "metabase-types/api";
+import { isNotNull } from "metabase/lib/types";
 import GroupSummary from "../GroupSummary";
 import {
   MembershipActionsContainer,

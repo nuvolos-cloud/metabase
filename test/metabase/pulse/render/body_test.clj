@@ -6,8 +6,7 @@
    [hiccup.core :refer [html]]
    [metabase.pulse.render.body :as body]
    [metabase.pulse.render.common :as common]
-   [metabase.pulse.render.test-util :as render.tu]
-   [schema.core :as s]))
+   [metabase.pulse.render.test-util :as render.tu]))
 
 (use-fixtures :each
   (fn warn-possible-rebuild
@@ -292,12 +291,12 @@
                      :rows [["foo"]]}]
         (is (= "foo"
                (:render/text (body/render :scalar nil pacific-tz nil nil results))))
-        (is (schema= {:attachments (s/eq nil)
-                      :content     [(s/one (s/eq :div) "div tag")
-                                    (s/one {:style s/Str} "style map")
-                                    (s/one (s/eq "foo") "content")]
-                      :render/text (s/eq "foo")}
-                     (body/render :scalar nil pacific-tz nil nil results)))))
+        (is (=? {:attachments nil
+                 :content     [:div
+                               {:style string?}
+                               "foo"]
+                 :render/text "foo"}
+                (body/render :scalar nil pacific-tz nil nil results)))))
     (testing "for smartscalars"
       (let [cols    [{:name         "value",
                       :display_name "VALUE",
@@ -332,16 +331,16 @@
                                  :last-change nil
                                  :col "value"
                                  :last-value 20.0}]}]
-        (is (= "40\nUp 133.33%. Was 30 last month"
+        (is (= "40\nUp 133.33% vs. previous month: 30"
                (:render/text (body/render :smartscalar nil pacific-tz nil nil results))))
-        (is (= "40\nNo change. Was 40 last month"
+        (is (= "40\nNo change vs. previous month: 40"
                (:render/text (body/render :smartscalar nil pacific-tz nil nil sameres))))
         (is (= "20\nNothing to compare to."
                (:render/text (body/render :smartscalar nil pacific-tz nil nil dumbres))))
-        (is (schema= {:attachments (s/eq nil)
-                      :content     (s/pred vector? "hiccup vector")
-                      :render/text (s/eq "40\nUp 133.33%. Was 30 last month")}
-                     (body/render :smartscalar nil pacific-tz nil nil results)))))))
+        (is (=? {:attachments nil
+                 :content     vector?
+                 :render/text "40\nUp 133.33% vs. previous month: 30"}
+                (body/render :smartscalar nil pacific-tz nil nil results)))))))
 
 (defn- replace-style-maps [hiccup-map]
   (walk/postwalk (fn [maybe-map]
@@ -421,11 +420,15 @@
          (render-bar-graph {:cols         default-columns
                             :rows         [[10.0 1] [5.0 10] [2.50 20] [1.25 nil]]
                             :viz-settings {:graph.metrics ["NumPurchased"]}}))))
-  (testing "Check to make sure we allow nil values for the y-axis"
-    (is (has-inline-image?
-         (render-bar-graph {:cols         default-columns
-                            :rows         [[10.0 1] [5.0 10] [2.50 20] [nil 30]]
-                            :viz-settings {:graph.metrics ["NumPurchased"]}}))))
+  (testing "Check to make sure we allow nil values for the x-axis"
+    (let [graph (render-bar-graph {:cols         default-columns
+                                   :rows         [[10.0 1] [5.0 10] [2.50 20] [nil 30]]
+                                   :viz-settings {:graph.metrics ["NumPurchased"]}})]
+      (is (has-inline-image? graph))
+      (is (= graph
+             (render-bar-graph {:cols         default-columns
+                                :rows         [[10.0 1] [5.0 10] [2.50 20] ["(empty)" 30]]
+                                :viz-settings {:graph.metrics ["NumPurchased"]}})))))
   (testing "Check to make sure we allow nil values for both x and y on different rows"
     (is (has-inline-image?
          (render-bar-graph {:cols         default-columns
@@ -576,15 +579,16 @@
                                     x))
                                 html-tree))]
     (testing "Renders without error"
-      (let [rendered-info (render [["Doohickey" 75] ["Widget" 25]] {:show_values true})]
+      (let [rendered-info (render [[nil 10] ["Doohickey" 65] ["Widget" 25]] {:show_values true})]
         (is (has-inline-image? rendered-info))))
     (testing "Includes percentages"
       (is (= [:div
               [:img]
               [:table
-               [:tr [:td [:span "•"]] [:td "Doohickey"] [:td "75%"]]
+               [:tr [:td [:span "•"]] [:td "(empty)"] [:td "10%"]]
+               [:tr [:td [:span "•"]] [:td "Doohickey"] [:td "65%"]]
                [:tr [:td [:span "•"]] [:td "Widget"] [:td "25%"]]]]
-             (prune (:content (render [["Doohickey" 75] ["Widget" 25]]))))))))
+             (prune (:content (render [[nil 10] ["Doohickey" 65] ["Widget" 25]]))))))))
 
 (deftest render-progress
   (let [col [{:name          "NumPurchased",

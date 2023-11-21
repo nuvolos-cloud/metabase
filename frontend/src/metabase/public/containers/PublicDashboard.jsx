@@ -16,7 +16,7 @@ import title from "metabase/hoc/Title";
 import { setErrorPage } from "metabase/redux/app";
 import { getMetadata } from "metabase/selectors/metadata";
 
-import PublicMode from "metabase/modes/components/modes/PublicMode";
+import { PublicMode } from "metabase/visualizations/click-actions/modes/PublicMode";
 
 import {
   getDashboardComplete,
@@ -84,7 +84,7 @@ class PublicDashboard extends Component {
     initialize();
     try {
       await fetchDashboard(uuid || token, location.query);
-      if (this.props.dashboard.ordered_tabs.length === 0) {
+      if (this.props.dashboard.tabs.length === 0) {
         await fetchDashboardCardData({ reload: false, clearCache: true });
       }
     } catch (error) {

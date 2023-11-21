@@ -2,10 +2,9 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [java-time :as t]
+   [java-time.api :as t]
    [metabase.config :as config]
    [metabase.driver :as driver]
-   [metabase.driver.common :as driver.common]
    [metabase.driver.sql :as driver.sql]
    [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
    [metabase.driver.sql-jdbc.execute :as sql-jdbc.execute]
@@ -115,9 +114,17 @@
                                   :from   [[(h2x/identifier :table schema table)]]
                                   :limit  1}))
 
-(def ^:private ->date     (partial conj [:date]))
-(def ^:private ->datetime (partial conj [:datetime]))
-(def ^:private ->time     (partial conj [:time]))
+(defn- ->date [& args]
+  (-> (into [:date] args)
+      (h2x/with-database-type-info "date")))
+
+(defn- ->datetime [& args]
+  (-> (into [:datetime] args)
+      (h2x/with-database-type-info "datetime")))
+
+(defn- ->time [& args]
+  (-> (into [:time] args)
+      (h2x/with-database-type-info "time")))
 
 (defn- strftime [format-str expr]
   [:strftime (h2x/literal format-str) expr])
@@ -127,24 +134,30 @@
 (defmethod sql.qp/date [:sqlite :default] [_driver _unit expr] expr)
 
 (defmethod sql.qp/date [:sqlite :second]
-  [_driver _ expr]
-  (->datetime (strftime "%Y-%m-%d %H:%M:%S" expr)))
+  [_driver _unit expr]
+  (if (= (h2x/database-type expr) "time")
+    (->time (strftime "%H:%M:%S" expr))
+    (->datetime (strftime "%Y-%m-%d %H:%M:%S" expr))))
 
 (defmethod sql.qp/date [:sqlite :second-of-minute]
-  [_driver _ expr]
+  [_driver _unit expr]
   (h2x/->integer (strftime "%S" expr)))
 
 (defmethod sql.qp/date [:sqlite :minute]
-  [_driver _ expr]
-  (->datetime (strftime "%Y-%m-%d %H:%M" expr)))
+  [_driver _unit expr]
+  (if (= (h2x/database-type expr) "time")
+    (->time (strftime "%H:%M" expr))
+    (->datetime (strftime "%Y-%m-%d %H:%M" expr))))
 
 (defmethod sql.qp/date [:sqlite :minute-of-hour]
   [_driver _ expr]
   (h2x/->integer (strftime "%M" expr)))
 
 (defmethod sql.qp/date [:sqlite :hour]
-  [_driver _ expr]
-  (->datetime (strftime "%Y-%m-%d %H:00" expr)))
+  [_driver _unit expr]
+  (if (= (h2x/database-type expr) "time")
+    (->time (strftime "%H:00" expr))
+    (->datetime (strftime "%Y-%m-%d %H:00" expr))))
 
 (defmethod sql.qp/date [:sqlite :hour-of-day]
   [_driver _ expr]
@@ -338,17 +351,9 @@
     [:datetime (h2x/literal (u.date/format-sql t))]))
 
 ;; SQLite defaults everything to UTC
-(defmethod driver.common/current-db-time-date-formatters :sqlite
-  [_]
-  (driver.common/create-db-time-formatters "yyyy-MM-dd HH:mm:ss"))
-
-(defmethod driver.common/current-db-time-native-query :sqlite
-  [_]
-  "select cast(datetime('now') as text);")
-
-(defmethod driver/current-db-time :sqlite
-  [& args]
-  (apply driver.common/current-db-time args))
+(defmethod driver/db-default-timezone :sqlite
+  [_driver _database]
+  "UTC")
 
 (defmethod sql-jdbc.sync/active-tables :sqlite
   [& args]

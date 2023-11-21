@@ -6,13 +6,13 @@ import { t } from "ttag";
 import _ from "underscore";
 
 import { useMount, useUnmount, usePrevious } from "react-use";
-import { PLUGIN_SELECTORS } from "metabase/plugins";
 import Bookmark from "metabase/entities/bookmarks";
 import Collections from "metabase/entities/collections";
 import Timelines from "metabase/entities/timelines";
 import { getSetting } from "metabase/selectors/settings";
 
-import { closeNavbar, getIsNavbarOpen } from "metabase/redux/app";
+import { closeNavbar } from "metabase/redux/app";
+import { getIsNavbarOpen } from "metabase/selectors/app";
 import { getMetadata } from "metabase/selectors/metadata";
 import {
   getUser,
@@ -21,7 +21,7 @@ import {
 } from "metabase/selectors/user";
 
 import { useForceUpdate } from "metabase/hooks/use-force-update";
-
+import { useCallbackEffect } from "metabase/hooks/use-callback-effect";
 import { useLoadingTimer } from "metabase/hooks/use-loading-timer";
 import { useWebNotification } from "metabase/hooks/use-web-notification";
 
@@ -29,8 +29,10 @@ import title from "metabase/hoc/Title";
 import titleWithLoadingTime from "metabase/hoc/TitleWithLoadingTime";
 import favicon from "metabase/hoc/Favicon";
 
-import useBeforeUnload from "metabase/hooks/use-before-unload";
+import { LeaveConfirmationModal } from "metabase/components/LeaveConfirmationModal";
 import { useSelector } from "metabase/lib/redux";
+import { getWhiteLabeledLoadingMessage } from "metabase/selectors/whitelabel";
+
 import View from "../components/view/View";
 
 import {
@@ -90,6 +92,7 @@ import {
 } from "../selectors";
 import * as actions from "../actions";
 import { VISUALIZATION_SLOW_TIMEOUT } from "../constants";
+import { isNavigationAllowed } from "../utils";
 
 const timelineProps = {
   query: { include: "events" },
@@ -101,7 +104,6 @@ const mapStateToProps = (state, props) => {
     user: getUser(state, props),
     canManageSubscriptions: canManageSubscriptions(state, props),
     isAdmin: getUserIsAdmin(state, props),
-    fromUrl: props.location.query?.from,
 
     mode: getMode(state),
 
@@ -176,7 +178,7 @@ const mapStateToProps = (state, props) => {
     documentTitle: getDocumentTitle(state),
     pageFavicon: getPageFavicon(state),
     isLoadingComplete: getIsLoadingComplete(state),
-    loadingMessage: PLUGIN_SELECTORS.getLoadingMessage(state),
+    loadingMessage: getWhiteLabeledLoadingMessage(state),
 
     reportTimezone: getSetting(state, "report-timezone-long"),
   };
@@ -193,9 +195,9 @@ const mapDispatchToProps = {
 function QueryBuilder(props) {
   const {
     question,
+    originalQuestion,
     location,
     params,
-    fromUrl,
     uiControls,
     isNativeEditorOpen,
     isAnySidebarOpen,
@@ -205,7 +207,6 @@ function QueryBuilder(props) {
     apiUpdateQuestion,
     updateUrl,
     locationChanged,
-    onChangeLocation,
     setUIControls,
     cancelQuery,
     isBookmarked,
@@ -216,6 +217,7 @@ function QueryBuilder(props) {
     card,
     isLoadingComplete,
     closeQB,
+    route,
   } = props;
 
   const forceUpdate = useForceUpdate();
@@ -263,29 +265,55 @@ function QueryBuilder(props) {
     toggleBookmark(id);
   };
 
+  /**
+   * Navigation is scheduled so that LeaveConfirmationModal's isEnabled
+   * prop has a chance to re-compute on re-render
+   */
+  const [isCallbackScheduled, scheduleCallback] = useCallbackEffect();
+
   const handleCreate = useCallback(
     async newQuestion => {
       const shouldBePinned = newQuestion.isDataset();
-      await apiCreateQuestion(newQuestion.setPinned(shouldBePinned));
+      const createdQuestion = await apiCreateQuestion(
+        newQuestion.setPinned(shouldBePinned),
+      );
+      await setUIControls({ isModifiedFromNotebook: false });
 
-      setRecentlySaved("created");
+      scheduleCallback(async () => {
+        await updateUrl(createdQuestion, { dirty: false });
+
+        setRecentlySaved("created");
+      });
     },
-    [apiCreateQuestion, setRecentlySaved],
+    [
+      apiCreateQuestion,
+      setRecentlySaved,
+      setUIControls,
+      updateUrl,
+      scheduleCallback,
+    ],
   );
 
   const handleSave = useCallback(
     async (updatedQuestion, { rerunQuery } = {}) => {
       await apiUpdateQuestion(updatedQuestion, { rerunQuery });
-      if (!rerunQuery) {
-        await updateUrl(updatedQuestion, { dirty: false });
-      }
-      if (fromUrl) {
-        onChangeLocation(fromUrl);
-      } else {
+      await setUIControls({ isModifiedFromNotebook: false });
+
+      scheduleCallback(async () => {
+        if (!rerunQuery) {
+          await updateUrl(updatedQuestion, { dirty: false });
+        }
+
         setRecentlySaved("updated");
-      }
+      });
     },
-    [fromUrl, apiUpdateQuestion, updateUrl, onChangeLocation, setRecentlySaved],
+    [
+      apiUpdateQuestion,
+      updateUrl,
+      setRecentlySaved,
+      setUIControls,
+      scheduleCallback,
+    ],
   );
 
   useMount(() => {
@@ -300,7 +328,6 @@ function QueryBuilder(props) {
   const shouldShowUnsavedChangesWarning = useSelector(
     getShouldShowUnsavedChangesWarning,
   );
-  useBeforeUnload(shouldShowUnsavedChangesWarning);
 
   useUnmount(() => {
     cancelQuery();
@@ -396,22 +423,41 @@ function QueryBuilder(props) {
     setIsShowingToaster(false);
   }, []);
 
+  const isNewQuestion = !originalQuestion;
+  const isLocationAllowed = useCallback(
+    location =>
+      isNavigationAllowed({
+        destination: location,
+        question,
+        isNewQuestion,
+      }),
+    [question, isNewQuestion],
+  );
+
   return (
-    <View
-      {...props}
-      modal={uiControls.modal}
-      recentlySaved={uiControls.recentlySaved}
-      onOpenModal={openModal}
-      onCloseModal={closeModal}
-      onSetRecentlySaved={setRecentlySaved}
-      onSave={handleSave}
-      onCreate={handleCreate}
-      handleResize={forceUpdateDebounced}
-      toggleBookmark={onClickBookmark}
-      onDismissToast={onDismissToast}
-      onConfirmToast={onConfirmToast}
-      isShowingToaster={isShowingToaster}
-    />
+    <>
+      <View
+        {...props}
+        modal={uiControls.modal}
+        recentlySaved={uiControls.recentlySaved}
+        onOpenModal={openModal}
+        onCloseModal={closeModal}
+        onSetRecentlySaved={setRecentlySaved}
+        onSave={handleSave}
+        onCreate={handleCreate}
+        handleResize={forceUpdateDebounced}
+        toggleBookmark={onClickBookmark}
+        onDismissToast={onDismissToast}
+        onConfirmToast={onConfirmToast}
+        isShowingToaster={isShowingToaster}
+      />
+
+      <LeaveConfirmationModal
+        isEnabled={shouldShowUnsavedChangesWarning && !isCallbackScheduled}
+        isLocationAllowed={isLocationAllowed}
+        route={route}
+      />
+    </>
   );
 }
 

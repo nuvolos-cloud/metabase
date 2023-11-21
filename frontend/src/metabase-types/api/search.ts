@@ -1,21 +1,23 @@
-import { CardId } from "./card";
-import { Collection } from "./collection";
-import { DatabaseId, InitialSyncStatus } from "./database";
-import { FieldReference } from "./query";
-import { TableId } from "./table";
+import type { UserId } from "metabase-types/api/user";
+import type { CardId } from "./card";
+import type { Collection, CollectionId } from "./collection";
+import type { DatabaseId, InitialSyncStatus } from "./database";
+import type { FieldReference } from "./query";
+import type { TableId } from "./table";
 
-export type SearchModelType =
-  | "card"
+export type EnabledSearchModelType =
   | "collection"
   | "dashboard"
+  | "card"
   | "database"
-  | "dataset"
   | "table"
-  | "indexed-entity"
-  | "pulse"
-  | "segment"
-  | "metric"
-  | "action";
+  | "dataset"
+  | "action"
+  | "indexed-entity";
+
+export type SearchModelType =
+  | ("segment" | "metric" | "pulse" | "snippet")
+  | EnabledSearchModelType;
 
 export interface SearchScore {
   weight: number;
@@ -47,7 +49,7 @@ export interface SearchResults {
 }
 
 export interface SearchResult {
-  id: number | undefined;
+  id: number;
   name: string;
   model: SearchModelType;
   description: string | null;
@@ -61,15 +63,22 @@ export interface SearchResult {
   table_schema: string | null;
   collection_authority_level: "official" | null;
   updated_at: string;
-  moderated_status: boolean | null;
+  moderated_status: string | null;
   model_id: CardId | null;
   model_name: string | null;
+  model_index_id: number | null;
   table_description: string | null;
   table_name: string | null;
   initial_sync_status: InitialSyncStatus | null;
   dashboard_count: number | null;
   context: any; // this might be a dead property
   scores: SearchScore[];
+  last_edited_at: string | null;
+  last_editor_id: UserId | null;
+  last_editor_common_name: string | null;
+  creator_id: UserId | null;
+  creator_common_name: string | null;
+  created_at: string | null;
 }
 
 export interface SearchListQuery {
@@ -79,4 +88,6 @@ export interface SearchListQuery {
   table_db_id?: DatabaseId;
   limit?: number;
   offset?: number;
+  collection?: CollectionId;
+  filter_items_in_personal_collection?: "only" | "exclude";
 }

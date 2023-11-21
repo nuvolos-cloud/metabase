@@ -5,12 +5,16 @@
    [clojure.set :as set]
    [clojure.string :as str]
    [medley.core :as m]
+   [metabase.config :as config]
    [metabase.db.query :as mdb.query]
    [metabase.mbql.normalize :as mbql.normalize]
+   [metabase.models.audit-log :as audit-log]
    [metabase.models.collection :as collection]
    [metabase.models.field-values :as field-values]
    [metabase.models.interface :as mi]
-   [metabase.models.parameter-card :as parameter-card :refer [ParameterCard]]
+   [metabase.models.parameter-card
+    :as parameter-card
+    :refer [ParameterCard]]
    [metabase.models.params :as params]
    [metabase.models.permissions :as perms]
    [metabase.models.query :as query]
@@ -19,7 +23,9 @@
    [metabase.moderation :as moderation]
    [metabase.plugins.classloader :as classloader]
    [metabase.public-settings :as public-settings]
-   [metabase.public-settings.premium-features :as premium-features :refer [defenterprise]]
+   [metabase.public-settings.premium-features
+    :as premium-features
+    :refer [defenterprise]]
    [metabase.query-processor.util :as qp.util]
    [metabase.server.middleware.session :as mw.session]
    [metabase.util :as u]
@@ -58,6 +64,21 @@
   (derive ::perms/use-parent-collection-perms)
   (derive :hook/timestamped?)
   (derive :hook/entity-id))
+
+(defmethod mi/can-write? Card
+  ([instance]
+   ;; Cards in audit collection should be read only
+   (if (perms/is-parent-collection-audit? instance)
+     false
+     (mi/current-user-has-full-permissions? (perms/perms-objects-set-for-parent-collection instance :write))))
+  ([_ pk]
+   (mi/can-write? (t2/select-one :model/Card :id pk))))
+
+(defmethod mi/can-read? Card
+  ([instance]
+   (perms/can-read-audit-helper :model/Card instance))
+  ([_ pk]
+   (mi/can-read? (t2/select-one :model/Card :id pk))))
 
 ;;; -------------------------------------------------- Hydration --------------------------------------------------
 
@@ -106,7 +127,7 @@
 ;;; --------------------------------------------------- Revisions ----------------------------------------------------
 
 (def ^:private excluded-columns-for-card-revision
-  [:id :created_at :updated_at :entity_id :creator_id :public_uuid :made_public_by_id])
+  [:id :created_at :updated_at :entity_id :creator_id :public_uuid :made_public_by_id :metabase_version])
 
 (defmethod revision/serialize-instance :model/Card
   ([instance]
@@ -122,17 +143,21 @@
 (defn populate-query-fields
   "Lift `database_id`, `table_id`, and `query_type` from query definition when inserting/updating a Card."
   [{{query-type :type, :as outer-query} :dataset_query, :as card}]
-  (cond->> card
-    ;; mega HACK FIXME -- don't update this stuff when doing deserialization because it might differ from what's in the
-    ;; YAML file and break tests like [[metabase-enterprise.serialization.v2.e2e.yaml-test/e2e-storage-ingestion-test]].
-    ;; The root cause of this issue is that we're generating Cards that have a different Database ID or Table ID from
-    ;; what's actually in their query -- we need to fix [[metabase.test.generate]], but I'm not sure how to do that
-    (not mi/*deserializing?*)
-    (merge (when-let [{:keys [database-id table-id]} (and query-type
-                                                          (query/query->database-and-table-ids outer-query))]
-             {:database_id database-id
-              :table_id    table-id
-              :query_type  (keyword query-type)}))))
+  (merge
+   card
+   ;; mega HACK FIXME -- don't update this stuff when doing deserialization because it might differ from what's in the
+   ;; YAML file and break tests like [[metabase-enterprise.serialization.v2.e2e.yaml-test/e2e-storage-ingestion-test]].
+   ;; The root cause of this issue is that we're generating Cards that have a different Database ID or Table ID from
+   ;; what's actually in their query -- we need to fix [[metabase.test.generate]], but I'm not sure how to do that
+   (when-not mi/*deserializing?*
+     (when-let [{:keys [database-id table-id]} (and query-type
+                                                    (query/query->database-and-table-ids outer-query))]
+       (merge
+        {:query_type (keyword query-type)}
+        (when database-id
+          {:database_id database-id})
+        (when table-id
+          {:table_id table-id}))))))
 
 (defn- populate-result-metadata
   "When inserting/updating a Card, populate the result metadata column if not already populated by inferring the
@@ -208,7 +233,8 @@
   "Transforms native query's `template-tags` into `parameters`.
   An older style was to not include `:template-tags` onto cards as parameters. I think this is a mistake and they should always be there. Apparently lots of e2e tests are sloppy about this so this is included as a convenience."
   [card]
-  ;; NOTE: this should mirror `getTemplateTagParameters` in frontend/src/metabase/parameters/utils/cards.js
+  ;; NOTE: this should mirror `getTemplateTagParameters` in frontend/src/metabase-lib/parameters/utils/template-tags.ts
+  ;; If this function moves you should update the comment that links to this one
   (for [[_ {tag-type :type, widget-type :widget-type, :as tag}] (get-in card [:dataset_query :native :template-tags])
         :when                         (and tag-type
                                            (or (and widget-type (not= widget-type :none))
@@ -405,6 +431,7 @@
 (t2/define-before-insert :model/Card
   [card]
   (-> card
+      (assoc :metabase_version config/mb-version-string)
       maybe-normalize-query
       populate-result-metadata
       pre-insert
@@ -420,12 +447,17 @@
 
 (t2/define-before-update :model/Card
   [card]
-  (-> (merge (t2/instance :model/Card {:id (:id card)})
-             (t2/changes card))
+  ;; remove all the unchanged keys from the map, except for `:id`, so the functions below can do the right thing since
+  ;; they were written pre-Toucan 2 and don't know about [[t2/changes]]...
+  ;;
+  ;; We have to convert this to a plain map rather than a Toucan 2 instance at this point to work around upstream bug
+  ;; https://github.com/camsaul/toucan2/issues/145 .
+  (-> (into {:id (:id card)} (t2/changes card))
       maybe-normalize-query
       populate-result-metadata
       pre-update
-      populate-query-fields))
+      populate-query-fields
+      (dissoc :id)))
 
 ;; Cards don't normally get deleted (they get archived instead) so this mostly affects tests
 (t2/define-before-delete :model/Card
@@ -464,10 +496,10 @@
 
 (defn- result-metadata-deps [metadata]
   (when (seq metadata)
-    (reduce set/union (for [m (seq metadata)]
-                        (reduce set/union (serdes/mbql-deps (:field_ref m))
-                                [(when (:table_id m) #{(serdes/table->path (:table_id m))})
-                                 (when (:id m)       #{(serdes/field->path (:id m))})])))))
+    (reduce set/union #{} (for [m (seq metadata)]
+                            (reduce set/union (serdes/mbql-deps (:field_ref m))
+                                    [(when (:table_id m) #{(serdes/table->path (:table_id m))})
+                                     (when (:id m)       #{(serdes/field->path (:id m))})])))))
 
 (defmethod serdes/extract-one "Card"
   [_model-name _opts card]
@@ -488,7 +520,7 @@
         (update :visualization_settings serdes/export-visualization-settings)
         (update :result_metadata        (partial export-result-metadata card)))
     (catch Exception e
-      (throw (ex-info "Failed to export Card" {:card card} e)))))
+      (throw (ex-info (format "Failed to export Card: %s" (ex-message e)) {:card card} e)))))
 
 (defmethod serdes/load-xform "Card"
   [card]
@@ -509,7 +541,7 @@
   [{:keys [collection_id database_id dataset_query parameters parameter_mappings
            result_metadata table_id visualization_settings]}]
   (->> (map serdes/mbql-deps parameter_mappings)
-       (reduce set/union)
+       (reduce set/union #{})
        (set/union (serdes/parameters-deps parameters))
        (set/union #{[{:model "Database" :id database_id}]})
        ; table_id and collection_id are nullable.
@@ -539,3 +571,12 @@
       (when (seq snippets)
         (set (for [snippet-id snippets]
                ["NativeQuerySnippet" snippet-id]))))))
+
+
+;;; ------------------------------------------------ Audit Log --------------------------------------------------------
+
+(defmethod audit-log/model-details :model/Card
+  [{dataset? :dataset :as card} _event-type]
+  (merge (select-keys card [:name :description :database_id :table_id])
+          ;; Use `model` instead of `dataset` to mirror product terminology
+         {:model? dataset?}))
